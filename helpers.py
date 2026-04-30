@@ -72,3 +72,24 @@ def runEpisode(env, policy):
 # uniform random policy
 def randomPolicy(obs, env):
 	return env.action_space.sample()
+
+
+# returns the CCS region whose weight interval contains prefWeight (2D only)
+def findRegion(prefWeight, regions):
+	w = float(prefWeight[0])
+	for region in regions:
+		if region['wLeft'] <= w <= region['wRight']:
+			return region
+	return regions[-1]
+
+
+# returns a policy callable that samples from the rho-adjusted distribution π*(a|s)^rho
+def makeDemoPolicy(policy, rho):
+	def demoPolicy(obs, env):
+		s = tuple(obs)
+		if s not in policy:
+			return env.action_space.sample()
+		probs = policy[s] ** rho
+		probs /= probs.sum()
+		return np.random.choice(len(probs), p=probs)
+	return demoPolicy

@@ -37,7 +37,7 @@ import os
 import sys
 import numpy as np
 from config import POLICY_BETA, DEMO_BETA, TRAJ_PER_USER, NUM_USERS
-from helpers import makeEnv, printEnvInfo, runEpisode
+from helpers import makeEnv, printEnvInfo, runEpisode, findRegion, makeDemoPolicy
 from algs.ccs import buildCCS, printCCS, saveCCS, loadCCS
 
 
@@ -90,9 +90,18 @@ def main():
 			prefWeight = np.random.dirichlet(np.ones(nObj))
 			print(f"\nUser {user}: true preference weight = {np.round(prefWeight, 4)}")
 
-			# generate demonstration data/trajectories
-				# ? what is the best way to do this? What do other preference inference papers do to generate trajectories?
-				# ? Do I need to train a demonstrator policy that is boltzmann ration with beta of DEMO_BETA? I assume I cant use the policies in the CCS since they are trained based on a different beta value, POLICY_BETA, which is going to be much higher
+			# generate demonstrations
+			# we cant just roll out the CCS policy that corresponds to prefWeight
+			# that CCS policy (π*(a|s)) was trained with POLICY_BETA
+			# By definition the demonstration should be a rationality of DEMO_BETA
+			# substituting log π*(a|s) = POLICY_BETA · w·Q(s,a) + c(s) into P_demo gives:
+			#   P_demo(a|s) ∝ π*(a|s)^ρ,  where ρ = DEMO_BETA / POLICY_BETA
+			# so raising CCS policy probabilities to the power ρ and renormalizing gives the exact Boltzmann-rational demonstrator policy for DEMO_BETA
+			rho = DEMO_BETA / ccs['policyBeta']								# rationality ratio (ρ)
+			trueRegion = findRegion(prefWeight, regions)
+			demoPolicy = makeDemoPolicy(trueRegion['policy'], rho)
+			demos = [runEpisode(env, demoPolicy)[0] for _ in range(TRAJ_PER_USER)]
+			print(f"  generated {TRAJ_PER_USER} demo(s), {sum(len(d) for d in demos)} total steps")
 
 			# perform bipi on the demo data using the precomuted ccs with (volumes, optimalpolicies and expected returns for each region)
 				# return a probability distribution over centroids representing their regions

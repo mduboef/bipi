@@ -164,6 +164,8 @@ def saveCCS(ccs, saveDir, beta):
 			{
 				'policy': e['policy'],
 				'returnVec': e['returnVec'],
+				'wLeft': e['wLeft'],
+				'wRight': e['wRight'],
 				'volume': e['volume'],
 				'centroid': e['centroid'],
 			}

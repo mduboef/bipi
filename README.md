@@ -1,4 +1,4 @@
-# BIPI — Bayesian Inverse Preference Inference
+# Bayesian Inverse Preference Inference (BIPI)
 
 Infers a demonstrator's latent preferences over multiple objectives from demonstration data and assigns them the Pareto-optimal policy based on the inferred probability distribution over preferences.
 
