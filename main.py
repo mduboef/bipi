@@ -39,6 +39,7 @@ import numpy as np
 from config import POLICY_BETA, DEMO_BETA, TRAJ_PER_USER, NUM_USERS
 from helpers import makeEnv, printEnvInfo, runEpisode, findRegion, makeDemoPolicy, renderTrajectory
 from algs.ccs import buildCCS, printCCS, saveCCS, loadCCS
+from algs.bipi import runBIPI, selectMapPolicy, selectMeanWeightPolicy, selectEUPolicy, selectCVaRPolicy, printBIPIResults
 
 
 
@@ -47,7 +48,7 @@ def main():
 
 	# stores names of environments to run experiments on
 	envNames = ["deep-sea-treasure-v0"]
-	methodNames = ["ccs", "bipi", "dwpi"]
+	methodNames = ["ccs", "bipi", "dwpi", "compare"]
 
 
 	if sys.argv[1] not in envNames:
@@ -104,33 +105,48 @@ def main():
 			demoPolicy = makeDemoPolicy(trueRegion['policy'], rho)
 			demos = [runEpisode(env, demoPolicy)[0] for _ in range(TRAJ_PER_USER)]
 			print(f"  generated {TRAJ_PER_USER} demo(s), {sum(len(d) for d in demos)} total steps")
-
-			# graphical rendering of the demos
-			for i, demo in enumerate(demos):
-				renderTrajectory(demo, f"demo {i}  (DEMO_BETA={DEMO_BETA})", envName)
-			
-			# rollout and render the optimal policy in the CCS for prefWeight
+			# rollout policy in CCS that corresponds to prefWeight
 			optimalTraj, _ = runEpisode(env, makeDemoPolicy(trueRegion['policy'], rho=1.0))
-			renderTrajectory(optimalTraj, f"optimal CCS policy rollout (POLICY_BETA={ccs['policyBeta']})", envName)
 
-			# perform bipi on the demo data using the precomuted ccs with (volumes, optimalpolicies and expected returns for each region)
-				# return a probability distribution over centroids representing their regions
 
-			# get 4 different policies base on the distribution bipi spits out
-				# 1. the pareto optimal policy associated with the region with the highest likelihood/probability
-				# 2. the pareto optimal policy associated with the mean preference weight base on the ditribution
-					# mean = \sum_{region} centroid_{region} * prob of region
-				# 3. the pareto optimal policy that results in the highest expected utility considering the likelihood of every region
-				# 4. the pareto optimal policy with the best 5% CVaR considering the distribution over possible preference weights
+			# graphical rendering of the demos and optimalTraj
+			if renderBool:
+				for i, demo in enumerate(demos):
+					renderTrajectory(demo, f"demo {i}  (DEMO_BETA={DEMO_BETA})", envName)
+				renderTrajectory(optimalTraj, f"optimal CCS policy rollout (POLICY_BETA={ccs['policyBeta']})", envName)
+
+			# get region that accutally corresponds to prefWeight
+			trueRegionIdx = next(i for i, r in enumerate(regions) if r is trueRegion)
+
+			# run bipi on the demo data
+			# return posterior (probability distribution over regions/centroids)
+			posterior = runBIPI(regions, demos, rho)
+
+
+			# 4 different wasys to select a policy based on the posterior
+
+			# MAP 			:	the pareto optimal policy associated with the region with the highest likelihood/probability
+			mapIdx  = selectMapPolicy(posterior)
+
+			# Mean Weight	:	the pareto optimal policy associated with the mean preference weight base on the distribution
+			meanIdx = selectMeanWeightPolicy(posterior, regions)	# mean = \sum_{region} centroid_{region} * prob of region
+
+			# EU			:	the pareto optimal policy that results in the highest expected utility considering the likelihood of every region
+			euIdx   = selectEUPolicy(posterior, regions)
+
+			# CVaR			:	the pareto optimal policy with the best 5% CVaR considering the distribution over possible preference weights
+			cvarIdx = selectCVaRPolicy(posterior, regions)
 
 			# evaluate bipi's performance
 				# was the real preference actually in the predicted region?
 				# what is the expected utility of the user if they follow the policy we assigned to them?
+			printBIPIResults(posterior, regions, trueRegionIdx, prefWeight, mapIdx, meanIdx, euIdx, cvarIdx)
 
 
+	# elif methodName == "dwpi":
+		# try to load ccs from saved files
 
-	# else:	# dwpi
-	# 	# try to load ccs from saved files
+	# else:	# do both bipi and dwpi and print out a comparison of the results
 
 
 	env.close()
