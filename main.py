@@ -37,7 +37,7 @@ import os
 import sys
 import numpy as np
 from config import POLICY_BETA, DEMO_BETA, TRAJ_PER_USER, NUM_USERS
-from helpers import makeEnv, printEnvInfo, runEpisode, findRegion, makeDemoPolicy
+from helpers import makeEnv, printEnvInfo, runEpisode, findRegion, makeDemoPolicy, renderTrajectory
 from algs.ccs import buildCCS, printCCS, saveCCS, loadCCS
 
 
@@ -62,6 +62,8 @@ def main():
 		sys.exit(1)
 	else: methodName = sys.argv[2]
 
+	# flag will graphically render synthetic demos and rollout of CCS policy that would be best for user
+	renderBool = ("-render" in sys.argv)
 	
 
 	env = makeEnv()
@@ -102,6 +104,14 @@ def main():
 			demoPolicy = makeDemoPolicy(trueRegion['policy'], rho)
 			demos = [runEpisode(env, demoPolicy)[0] for _ in range(TRAJ_PER_USER)]
 			print(f"  generated {TRAJ_PER_USER} demo(s), {sum(len(d) for d in demos)} total steps")
+
+			# graphical rendering of the demos
+			for i, demo in enumerate(demos):
+				renderTrajectory(demo, f"demo {i}  (DEMO_BETA={DEMO_BETA})", envName)
+			
+			# rollout and render the optimal policy in the CCS for prefWeight
+			optimalTraj, _ = runEpisode(env, makeDemoPolicy(trueRegion['policy'], rho=1.0))
+			renderTrajectory(optimalTraj, f"optimal CCS policy rollout (POLICY_BETA={ccs['policyBeta']})", envName)
 
 			# perform bipi on the demo data using the precomuted ccs with (volumes, optimalpolicies and expected returns for each region)
 				# return a probability distribution over centroids representing their regions

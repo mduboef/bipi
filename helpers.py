@@ -1,3 +1,4 @@
+import time
 import mo_gymnasium as mo_gym
 import numpy as np
 from config import ACTION_LABELS, TREASURE_IDX, TIME_IDX
@@ -83,6 +84,21 @@ def findRegion(prefWeight, regions):
 	return regions[-1]
 
 
+# replays a stored trajectory graphically by stepping through a fresh render env
+def renderTrajectory(traj, label, envName, frameDelay=0.4):
+	renderEnv = mo_gym.make(envName, render_mode="human")
+	renderEnv.reset()
+	print(f"  replaying: {label}  ({len(traj)} steps)")
+	renderEnv.render()
+	time.sleep(frameDelay)
+	for _, action, _ in traj:
+		renderEnv.step(action)
+		renderEnv.render()
+		time.sleep(frameDelay)
+	time.sleep(5.0)
+	renderEnv.close()
+
+
 # returns a policy callable that samples from the rho-adjusted distribution π*(a|s)^rho
 def makeDemoPolicy(policy, rho):
 	def demoPolicy(obs, env):
@@ -93,3 +109,4 @@ def makeDemoPolicy(policy, rho):
 		probs /= probs.sum()
 		return np.random.choice(len(probs), p=probs)
 	return demoPolicy
+
