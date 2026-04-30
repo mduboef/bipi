@@ -30,11 +30,12 @@
 # test robustness of approaches to various types of misspecification
 	# ie. \beta_{demo} assumed doesn't match true \beta_{demo} used to generate demos, 
 
+import os
 import sys
 import numpy as np
 from config import ACTION_LABELS, TREASURE_IDX, TIME_IDX, POLICY_BETA, DEMO_BETA
 from helpers import makeEnv, printCCSInfo, runEpisode
-from algs.ccs import buildCCS, printCCS
+from algs.ccs import buildCCS, printCCS, saveCCS
 
 
 
@@ -62,6 +63,9 @@ def main():
 	
 	ccs = buildCCS(env, nEpisodes=100000)
 	printCCS(ccs)
+
+	saveDir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'ccsResults', envName)
+	saveCCS(ccs, saveDir, POLICY_BETA)
 
 	env.close()
 

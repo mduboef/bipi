@@ -1,3 +1,5 @@
+import os
+import pickle
 import numpy as np
 from collections import defaultdict
 from morl_baselines.multi_policy.linear_support.linear_support import LinearSupport
@@ -150,3 +152,33 @@ def printCCS(ccs):
 		rv, c = e['returnVec'], e['centroid']
 		print(f"  {rv[0]:>8.4f}  {rv[1]:>6.4f}  {e['wLeft']:>8.4f}  {e['wRight']:>8.4f}  {e['volume']:>8.4f}  [{c[0]:.4f}, {c[1]:.4f}]")
 	print()
+
+
+# saves CCS results to disk under saveDir/ccs.pkl
+# payload includes policyBeta and one dict per region with: policy, returnVec, volume, centroid
+def saveCCS(ccs, saveDir, beta):
+	os.makedirs(saveDir, exist_ok=True)
+	payload = {
+		'policyBeta': beta,
+		'regions': [
+			{
+				'policy': e['policy'],
+				'returnVec': e['returnVec'],
+				'volume': e['volume'],
+				'centroid': e['centroid'],
+			}
+			for e in ccs
+		]
+	}
+	savePath = os.path.join(saveDir, 'ccs.pkl')
+	with open(savePath, 'wb') as f:
+		pickle.dump(payload, f)
+	print(f"  CCS saved → {savePath}  (policyBeta={beta})")
+
+
+# loads a previously saved CCS from saveDir/ccs.pkl
+# returns {'policyBeta': float, 'regions': list of dicts}
+def loadCCS(saveDir):
+	loadPath = os.path.join(saveDir, 'ccs.pkl')
+	with open(loadPath, 'rb') as f:
+		return pickle.load(f)
