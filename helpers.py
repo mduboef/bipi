@@ -9,7 +9,7 @@ def makeEnv():
 
 
 # prints environment dimensions and the known Pareto front
-def printCCSInfo(env, envName):
+def printEnvInfo(env, envName):
 	print(f"=== {envName} ===")
 	print(f"  observation space : {env.observation_space}")
 	print(f"  action space      : {env.action_space}  {ACTION_LABELS}")
