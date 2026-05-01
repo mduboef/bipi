@@ -109,3 +109,16 @@ def printBIPIResults(posterior, regions, trueRegionIdx, prefWeight, mapIdx, mean
 	print(f"    mean weight   : region {meanIdx:>3}  ({'correct' if meanIdx == trueRegionIdx else 'wrong'})")
 	print(f"    EU            : region {euIdx:>3}  ({'correct' if euIdx   == trueRegionIdx else 'wrong'})")
 	print(f"    CVaR({cvarAlpha})     : region {cvarIdx:>3}  ({'correct' if cvarIdx == trueRegionIdx else 'wrong'})")
+
+
+# prints an accuracy summary across all users for each policy selection method
+def printBIPIAccuracy(userResults):
+	nUsers   = len(userResults)
+	methods  = ['map', 'mean', 'eu', 'cvar']
+	labels   = {'map': 'MAP', 'mean': 'mean weight', 'eu': 'EU', 'cvar': 'CVaR(0.05)'}
+	counts   = {m: sum(1 for r in userResults if r[m] == r['trueRegionIdx']) for m in methods}
+
+	print(f"\n  accuracy summary:")
+	for m in methods:
+		acc = counts[m] / nUsers * 100
+		print(f"    {labels[m]:<14}: {counts[m]}/{nUsers}  ({acc:.1f}%)")

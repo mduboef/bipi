@@ -2,6 +2,8 @@
 
 Infers a demonstrator's latent preferences over multiple objectives from demonstration data and assigns them the Pareto-optimal policy based on the inferred probability distribution over preferences.
 
+This is my final project for CS 690S AI Alignment.
+
 ## Overview
 
 Given a precomputed **Convex Coverage Set (CCS)** of Pareto-optimal policies and a short demonstration, BIPI maintains a Bayesian posterior over preference weight regions on the simplex. Each region corresponds to one pareto optimal policy. Likelihood updates require only stored policy probabilities, no Q-values. There is no RL training at inference time.
