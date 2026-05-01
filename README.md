@@ -47,3 +47,5 @@ bipiFormalization.tex  — algorithm formalization and proofs
 
 - Lu et al. (2024). *DWPI: Inferring Reward Functions of Multi-Objective Markov Decision Processes.* Neural Computing and Applications.
 - Alegre et al. (2023). *Sample-Efficient Multi-Objective Learning via Generalized Policy Improvement Prioritization.* AAMAS.
+
+

@@ -42,34 +42,15 @@ from config import (POLICY_BETA, DEMO_BETA, TRAJ_PER_USER, NUM_USERS,
 from helpers import makeEnv, printEnvInfo, runEpisode, findRegion, renderTrajectory
 from algs.ccs import buildCCS, printCCS, saveCCS, loadCCS
 from algs.bipi import runBIPI, selectMapPolicy, selectMeanWeightPolicy, selectEUPolicy, selectCVaRPolicy, printBIPIResults, printBIPIAccuracy
-from algs.dwpi import (ENCODINGS, getWeightVecs, getGridDims, findNearestWeight,
+from algs.dwpi import (ENCODINGS, getWeightVecs, getGridDims,
 	trainDWMOTQ, saveDWMOTQ, loadDWMOTQ, lookupQTable,
-	makeBoltzmannDemoPolicy, makeGreedyPolicy, encodeDemos,
+	makeBoltzmannDemoPolicy, makeGreedyPolicy,
 	buildDWPIDataset, saveDataset, loadDataset,
 	trainDWPIModel, saveModels, loadModels,
 	generateTestEncodings, inferWeight, printDWPIResults)
+from compare import runCompare
 
 
-
-
-_COMPARE_METHODS = [
-	('bipi:MAP',        'bipi_map'),
-	('bipi:mean',       'bipi_mean'),
-	('bipi:EU',         'bipi_eu'),
-	('bipi:CVaR(0.05)', 'bipi_cvar'),
-	('dwpi:return',     'dwpi_return'),
-	('dwpi:stateFreq',  'dwpi_stateFreq'),
-	('dwpi:sf',         'dwpi_sf'),
-]
-
-def printCompareResults(results):
-	nUsers = len(results)
-	print(f"\n  {'method':<18}  {'accuracy':>15}  {'mean util gap':>14}")
-	print(f"  {'-'*18}  {'-'*15}  {'-'*14}")
-	for label, key in _COMPARE_METHODS:
-		nCorrect = sum(1 for r in results if r[key]['correct'])
-		meanGap  = np.mean([r[key]['eu'] - r['optimalEU'] for r in results])
-		print(f"  {label:<18}  {nCorrect:>3}/{nUsers}  ({nCorrect/nUsers*100:>5.1f}%)  {meanGap:>+.4f}")
 
 
 def main():
@@ -243,72 +224,7 @@ def main():
 	elif methodName == "compare":
 		ccsDir  = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'ccsResults', envName)
 		saveDir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'dwpiResults', envName)
-		ccs = loadCCS(ccsDir)
-		if ccs['policyBeta'] != POLICY_BETA:
-			print(f"Warning: CCS was computed with policyBeta={ccs['policyBeta']} but config has POLICY_BETA={POLICY_BETA}")
-		regions = ccs['regions']
-
-		# require both DWMOTQ and trained inference models — refuse to run if either is missing
-		dwmotqPath = os.path.join(saveDir, 'dwmotq.pkl')
-		modelPaths = {enc: os.path.join(saveDir, f'model_{enc}.pt') for enc in ENCODINGS}
-		missing = ([] if os.path.exists(dwmotqPath) else ['dwmotq.pkl']) + \
-		          [f'model_{enc}.pt' for enc, p in modelPaths.items() if not os.path.exists(p)]
-		if missing:
-			print("Error: missing cached files — run 'dwpi' mode first to generate them:")
-			for m in missing: print(f"  {m}")
-			sys.exit(1)
-
-		print("Loading DWMOTQ agent and inference models ...")
-		qTables      = loadDWMOTQ(saveDir)
-		weightVecs   = getWeightVecs(DWPI_GRANULARITY)
-		nRows, nCols = getGridDims(env)
-		stateSize    = nRows * nCols
-		nObj         = len(regions[0]['returnVec'])
-		models       = loadModels({'return': nObj, 'stateFreq': stateSize, 'sf': stateSize},
-		                          nObj, DWPI_HIDDEN_DIM, saveDir)
-		rho          = DEMO_BETA / ccs['policyBeta']
-
-		results = []
-		for user in range(NUM_USERS):
-			prefWeight = np.random.dirichlet(np.ones(nObj))
-
-			# generate shared demos used by all methods
-			qTable     = lookupQTable(qTables, prefWeight, weightVecs)
-			demoPolicy = makeBoltzmannDemoPolicy(qTable, DEMO_BETA)
-			demos      = [runEpisode(env, demoPolicy)[0] for _ in range(TRAJ_PER_USER)]
-
-			trueRegion    = findRegion(prefWeight, regions)
-			trueRegionIdx = next(i for i, r in enumerate(regions) if r is trueRegion)
-			optimalEU     = float(np.dot(prefWeight, regions[trueRegionIdx]['returnVec']))
-
-			# BIPI: Bayesian posterior → four policy selection strategies
-			posterior = runBIPI(regions, demos, rho)
-			assigned = {
-				'bipi_map':  selectMapPolicy(posterior),
-				'bipi_mean': selectMeanWeightPolicy(posterior, regions),
-				'bipi_eu':   selectEUPolicy(posterior, regions),
-				'bipi_cvar': selectCVaRPolicy(posterior, regions, 0.05),
-			}
-
-			# DWPI: encode same demos → infer weight → find region
-			for enc in ENCODINGS:
-				feat      = encodeDemos(demos, enc, nRows, nCols, DWPI_SF_GAMMA)
-				infW      = inferWeight(models[enc], feat)
-				infRegion = findRegion(infW, regions)
-				assigned['dwpi_' + enc] = next(i for i, r in enumerate(regions) if r is infRegion)
-
-			userResult = {'user': user, 'prefWeight': prefWeight,
-			              'trueRegionIdx': trueRegionIdx, 'optimalEU': optimalEU}
-			for key, idx in assigned.items():
-				userResult[key] = {'regionIdx': idx,
-				                   'eu':      float(np.dot(prefWeight, regions[idx]['returnVec'])),
-				                   'correct': idx == trueRegionIdx}
-			results.append(userResult)
-			print(f"  user {user:>3}: region {trueRegionIdx}  "
-			      + '  '.join(f"{k}: {'✓' if v['correct'] else '✗'}"
-			                  for k, v in userResult.items() if isinstance(v, dict)))
-
-		printCompareResults(results)
+		runCompare(env, ccsDir, saveDir)
 
 
 	env.close()
