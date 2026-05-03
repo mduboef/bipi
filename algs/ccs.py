@@ -93,7 +93,19 @@ def _attachRegions2D(entries):
 		e['centroid'] = np.array([mid, 1.0 - mid])
 
 
-# outer loop: LinearSupport + inner tabular MO Q-learning
+# retrains each policy at its region centroid weight and updates returnVec to match
+# called after _attachRegions2D so centroids are already computed; mutates entries in-place
+def _retrainAtCentroids(env, entries, s0, betaTrain, nEpisodes, alpha, gamma):
+	nObj = len(entries[0]['returnVec'])
+	for e in entries:
+		centroid = e['centroid']
+		print(f"  retraining at centroid w = {np.round(centroid, 4)} ...")
+		qTable = moQLearning(env, centroid, nObj, betaTrain, nEpisodes=nEpisodes, alpha=alpha, gamma=gamma)
+		e['policy']    = qTableToPolicy(qTable, centroid, betaTrain)
+		e['returnVec'] = computeReturnVec(qTable, s0, centroid, betaTrain, nObj)
+
+
+# outer loop: LinearSupport + inner tabular MO Q-learning, followed by centroid retraining
 # returns CCS: list of dicts with keys policy, returnVec, trainingWeight, wLeft, wRight, volume, centroid
 def buildCCS(env, betaTrain=POLICY_BETA, epsilon=1e-4, nEpisodes=10000, alpha=0.1, gamma=1.0):
 	nObj = env.unwrapped.reward_space.shape[0]
@@ -141,6 +153,8 @@ def buildCCS(env, betaTrain=POLICY_BETA, epsilon=1e-4, nEpisodes=10000, alpha=0.
 
 	dedupEntries.sort(key=lambda e: e['returnVec'][0])
 	_attachRegions2D(dedupEntries)
+	print("  retraining policies at region centroids ...")
+	_retrainAtCentroids(env, dedupEntries, s0, betaTrain, nEpisodes, alpha, gamma)
 	return dedupEntries
 
 

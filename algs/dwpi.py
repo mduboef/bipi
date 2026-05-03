@@ -17,6 +17,13 @@ from helpers import runEpisode
 ENCODINGS = ('return', 'stateFreq', 'sf')
 
 
+# soft state value: (1/beta) * log sum_a exp(beta * Q(s,a))
+def _softV(qVals, beta):
+	x = beta * qVals
+	m = x.max()
+	return (1.0 / beta) * (m + np.log(np.sum(np.exp(x - m))))
+
+
 # ─────────────────────────────────────────────────────────────
 # weight space helpers
 # ─────────────────────────────────────────────────────────────
@@ -78,7 +85,7 @@ def trainDWMOTQ(env, granularity=DWPI_GRANULARITY, nEpisodes=DWPI_N_EPISODES, al
 				done = terminated or truncated
 
 				scalarR = float(np.dot(r, w))
-				target = scalarR if done else scalarR + gamma * float(np.max(qTable[ns]))
+				target = scalarR if done else scalarR + gamma * _softV(qTable[ns], DEMO_BETA)
 				qTable[s][a] += alpha * (target - qTable[s][a])
 				s = ns
 
