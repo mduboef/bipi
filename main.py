@@ -81,19 +81,22 @@ def main():
 
 
 	if methodName == "ccs":
+		# if ccs.pkl doesn't exist compute it
 		print(f"Calculating CCS (beta = {POLICY_BETA}) ...")
-		ccs = buildCCS(env, nEpisodes=100000)
+		ccs = buildCCS(env, nEpisodes=150000)
 		printCCS(ccs)
 		saveDir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'ccsResults', envName)
-		saveCCS(ccs, saveDir, POLICY_BETA)
+		saveCCS(ccs, saveDir)
+		
+		# TODO find the softmax optimal policy for every centroid weight (using POLICY_BETA)
+		# TODO save that set of softmax policies to a new file in ccsResults
+		# these softmax policies will be used in BIPI to calculate a posterior over regions
 
 
 	elif methodName == "bipi":
 		ccsDir  = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'ccsResults', envName)
 		saveDir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'dwpiResults', envName)
 		ccs = loadCCS(ccsDir)
-		if ccs['policyBeta'] != POLICY_BETA:
-			print(f"Warning: CCS was computed with policyBeta={ccs['policyBeta']} but config has POLICY_BETA={POLICY_BETA}")
 		regions = ccs['regions']
 
 		dwmotqPath = os.path.join(saveDir, 'dwmotq.pkl')
@@ -105,7 +108,7 @@ def main():
 		weightVecs = getWeightVecs(DWPI_GRANULARITY)
 
 		nObj = len(regions[0]['returnVec'])
-		rho  = DEMO_BETA / ccs['policyBeta']  # used by BIPI inference likelihood model only
+		rho  = DEMO_BETA / POLICY_BETA
 		bipiResults = []
 
 		for user in range(NUM_USERS):

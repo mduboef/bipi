@@ -74,15 +74,13 @@ def _evaluateUser(env, regions, qTables, models, weightVecs, nRows, nCols, rho, 
 # loads all artifacts and runs the head-to-head comparison between BIPI and DWPI
 def runCompare(env, ccsDir, saveDir):
 	ccs = loadCCS(ccsDir)
-	if ccs['policyBeta'] != POLICY_BETA:
-		print(f"Warning: CCS was computed with policyBeta={ccs['policyBeta']} but config has POLICY_BETA={POLICY_BETA}")
 	regions = ccs['regions']
 
 	nObj         = len(regions[0]['returnVec'])
 	nRows, nCols = getGridDims(env)
 	stateSize    = nRows * nCols
 	weightVecs   = getWeightVecs(DWPI_GRANULARITY)
-	rho          = DEMO_BETA / ccs['policyBeta']
+	rho          = DEMO_BETA / POLICY_BETA
 
 	dwmotqPath = os.path.join(saveDir, 'dwmotq.pkl')
 	modelPaths = {enc: os.path.join(saveDir, f'model_{enc}.pt') for enc in ENCODINGS}

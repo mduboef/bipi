@@ -3,23 +3,12 @@ import pickle
 import numpy as np
 from collections import defaultdict
 from morl_baselines.multi_policy.linear_support.linear_support import LinearSupport
-from config import POLICY_BETA
 
 
-# soft Bellman backup: expected Q-vector under the softmax policy at next state
-# this ensures Q-values are consistent with the Boltzmann rationality assumption
-def _softTarget(qVecs, weight, betaTrain):
-	u = qVecs @ weight
-	u = u - u.max()
-	probs = np.exp(betaTrain * u)
-	probs /= probs.sum()
-	return probs @ qVecs  # expected Q-vector under softmax policy
-
-
-# tabular soft MO Q-learning at a fixed scalarization weight
-# uses soft Bellman backup so Q-values are consistent with the softmax policy π_β
+# tabular MO Q-learning at a fixed scalarization weight
+# uses hard (greedy) Bellman backup so Q-values converge to Q* for the deterministic optimal policy
 # returns qTable: {state_tuple -> np.array shape (nActions, nObj)}
-def moQLearning(env, weight, nObj, betaTrain, nEpisodes=10000, alpha=0.1, gamma=1.0, epsilonStart=1.0, epsilonEnd=0.01):
+def moQLearning(env, weight, nObj, nEpisodes=10000, alpha=0.1, gamma=1.0, epsilonStart=1.0, epsilonEnd=0.01):
 	nActions = env.action_space.n
 	qTable = defaultdict(lambda: np.zeros((nActions, nObj)))
 
@@ -42,7 +31,8 @@ def moQLearning(env, weight, nObj, betaTrain, nEpisodes=10000, alpha=0.1, gamma=
 			if done:
 				target = r
 			else:
-				target = r + gamma * _softTarget(qTable[ns], weight, betaTrain)
+				aStar = int(np.argmax(qTable[ns] @ weight))
+				target = r + gamma * qTable[ns][aStar]
 
 			qTable[s][a] += alpha * (target - qTable[s][a])
 			s = ns
@@ -50,26 +40,24 @@ def moQLearning(env, weight, nObj, betaTrain, nEpisodes=10000, alpha=0.1, gamma=
 	return dict(qTable)
 
 
-# converts Q-table to softmax policy: {state -> action probability array}
-def qTableToPolicy(qTable, weight, betaTrain):
+# converts Q-table to deterministic policy: {state -> one-hot action probability array}
+# optimal action at each state is argmax over scalarized Q-values
+def qTableToPolicy(qTable, weight):
+	nActions = next(iter(qTable.values())).shape[0]
 	policy = {}
 	for s, qVecs in qTable.items():
-		u = qVecs @ weight
-		u = u - u.max()  # shift for numerical stability before exp
-		expU = np.exp(betaTrain * u)
-		policy[s] = expU / expU.sum()
+		probs = np.zeros(nActions)
+		probs[int(np.argmax(qVecs @ weight))] = 1.0
+		policy[s] = probs
 	return policy
 
 
-# estimates J^pi at the initial state using Q-table values and softmax weights
-def computeReturnVec(qTable, s0, weight, betaTrain, nObj):
+# estimates J^pi at the initial state using the greedy action's Q-vector at s0
+def computeReturnVec(qTable, s0, weight, nObj):
 	if s0 not in qTable:
 		return np.zeros(nObj)
-	u = qTable[s0] @ weight
-	u = u - u.max()
-	expU = np.exp(betaTrain * u)
-	probs = expU / expU.sum()
-	return probs @ qTable[s0]
+	aStar = int(np.argmax(qTable[s0] @ weight))
+	return qTable[s0][aStar]
 
 
 # attaches wLeft, wRight, volume, centroid to each entry in-place (2D only)
@@ -93,21 +81,9 @@ def _attachRegions2D(entries):
 		e['centroid'] = np.array([mid, 1.0 - mid])
 
 
-# retrains each policy at its region centroid weight and updates returnVec to match
-# called after _attachRegions2D so centroids are already computed; mutates entries in-place
-def _retrainAtCentroids(env, entries, s0, betaTrain, nEpisodes, alpha, gamma):
-	nObj = len(entries[0]['returnVec'])
-	for e in entries:
-		centroid = e['centroid']
-		print(f"  retraining at centroid w = {np.round(centroid, 4)} ...")
-		qTable = moQLearning(env, centroid, nObj, betaTrain, nEpisodes=nEpisodes, alpha=alpha, gamma=gamma)
-		e['policy']    = qTableToPolicy(qTable, centroid, betaTrain)
-		e['returnVec'] = computeReturnVec(qTable, s0, centroid, betaTrain, nObj)
-
-
 # outer loop: LinearSupport + inner tabular MO Q-learning, followed by centroid retraining
-# returns CCS: list of dicts with keys policy, returnVec, trainingWeight, wLeft, wRight, volume, centroid
-def buildCCS(env, betaTrain=POLICY_BETA, epsilon=1e-4, nEpisodes=10000, alpha=0.1, gamma=1.0):
+# returns CCS: list of dicts with keys policy, qTable, returnVec, trainingWeight, wLeft, wRight, volume, centroid
+def buildCCS(env, epsilon=1e-4, nEpisodes=10000, alpha=0.1, gamma=1.0):
 	nObj = env.unwrapped.reward_space.shape[0]
 	if nObj != 2:
 		raise NotImplementedError("region computation only supported for 2 objectives")
@@ -116,45 +92,46 @@ def buildCCS(env, betaTrain=POLICY_BETA, epsilon=1e-4, nEpisodes=10000, alpha=0.
 	s0 = tuple(obs)
 
 	ls = LinearSupport(num_objectives=nObj, epsilon=epsilon, verbose=False)
-	ccsEntries = []  # mirrors ls.ccs exactly — only surviving non-dominated policies
+	ccsEntries = []
 
 	w = ls.next_weight()
 	while w is not None:
 		print(f"  training w = {np.round(w, 4)} ...")
-		qTable = moQLearning(env, w, nObj, betaTrain, nEpisodes=nEpisodes, alpha=alpha, gamma=gamma)
-		policy = qTableToPolicy(qTable, w, betaTrain)
-		rv = computeReturnVec(qTable, s0, w, betaTrain, nObj)
+		qTable = moQLearning(env, w, nObj, nEpisodes=nEpisodes, alpha=alpha, gamma=gamma)
+		policy = qTableToPolicy(qTable, w)
+		rv = computeReturnVec(qTable, s0, w, nObj)
 
 		nBefore = len(ls.ccs)
 		removedIdxs = ls.add_solution(rv, w)
 
-		# remove dominated entries (indices < nBefore are real removals; == nBefore is the sentinel
-		# returned when the new value itself is dominated and was not added)
 		validRemoved = [i for i in removedIdxs if i < nBefore]
 		for idx in sorted(validRemoved, reverse=True):
 			ccsEntries.pop(idx)
 
-		# append only if the new value was actually added to ls.ccs
 		if len(ls.ccs) == nBefore - len(validRemoved) + 1:
-			ccsEntries.append({'policy': policy, 'returnVec': rv, 'trainingWeight': w})
+			ccsEntries.append({'policy': policy, 'qTable': qTable, 'returnVec': rv, 'trainingWeight': w})
 
 		w = ls.next_weight()
 
-	# deduplicate: LinearSupport doesn't reject equal return vectors
-	# so two training runs converging to the same policy can produce identical entries in ls.ccs
+	# deduplicate: remove entries with nearly identical return vectors
 	seen = []
 	dedupEntries = []
-	# here we are removing any policies that have nearly identical reward vecs
-	# ? Why not just check if they are exactly the same? Should the margin be tighter so we don't throw away a distinct region
 	for e in ccsEntries:
 		if not any(np.allclose(e['returnVec'], rv, atol=0.05) for rv in seen):
 			seen.append(e['returnVec'])
 			dedupEntries.append(e)
 
+	# warn if any known Pareto-optimal policy is absent from the discovered CCS
+	try:
+		paretoFront = env.unwrapped.pareto_front(gamma=gamma)
+		for trueRv in paretoFront:
+			if not any(np.allclose(trueRv, e['returnVec'], atol=0.5) for e in dedupEntries):
+				print(f"  Warning: Pareto-optimal policy {np.round(trueRv, 4)} not found in CCS")
+	except AttributeError:
+		pass
+
 	dedupEntries.sort(key=lambda e: e['returnVec'][0])
 	_attachRegions2D(dedupEntries)
-	print("  retraining policies at region centroids ...")
-	_retrainAtCentroids(env, dedupEntries, s0, betaTrain, nEpisodes, alpha, gamma)
 	return dedupEntries
 
 
@@ -169,19 +146,18 @@ def printCCS(ccs):
 
 
 # saves CCS results to disk under saveDir/ccs.pkl
-# payload includes policyBeta and one dict per region with: policy, returnVec, volume, centroid
-def saveCCS(ccs, saveDir, beta):
+# payload includes one dict per region with: policy, qTable, returnVec, wLeft, wRight, volume, centroid
+def saveCCS(ccs, saveDir):
 	os.makedirs(saveDir, exist_ok=True)
 	payload = {
-		'policyBeta': beta,
 		'regions': [
 			{
-				'policy': e['policy'],
+				'policy':    e['policy'],
 				'returnVec': e['returnVec'],
-				'wLeft': e['wLeft'],
-				'wRight': e['wRight'],
-				'volume': e['volume'],
-				'centroid': e['centroid'],
+				'wLeft':     e['wLeft'],
+				'wRight':    e['wRight'],
+				'volume':    e['volume'],
+				'centroid':  e['centroid'],
 			}
 			for e in ccs
 		]
@@ -189,11 +165,11 @@ def saveCCS(ccs, saveDir, beta):
 	savePath = os.path.join(saveDir, 'ccs.pkl')
 	with open(savePath, 'wb') as f:
 		pickle.dump(payload, f)
-	print(f"  CCS saved → {savePath}  (policyBeta={beta})")
+	print(f"  CCS saved → {savePath}")
 
 
 # loads a previously saved CCS from saveDir/ccs.pkl
-# returns {'policyBeta': float, 'regions': list of dicts}
+# returns {'regions': list of dicts}
 def loadCCS(saveDir):
 	loadPath = os.path.join(saveDir, 'ccs.pkl')
 	with open(loadPath, 'rb') as f:
