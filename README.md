@@ -67,18 +67,3 @@ bipiFormalization.tex  — algorithm formalization and proofs
 
 - Lu et al. (2024). *DWPI: Inferring Reward Functions of Multi-Objective Markov Decision Processes.* Neural Computing and Applications.
 - Alegre et al. (2023). *Sample-Efficient Multi-Objective Learning via Generalized Policy Improvement Prioritization.* AAMAS.
-
-
-## The Big Fucking Unsolved Issue
-
-Actual pareto optimal policies. For each policy there is a set of preference weights for which that policy is completely optimal.
-
-Softmax policies. Very similar to pareto optimal policies but not 100% optimal they are boltzmann rational (POLICY_BETA is very high). This suboptimality is needed so that all actions have non-zero probability.
-  Many questions about how we calculate these:
-    These policies must have a single preference weight associated with them. The policy probabilites are determined by the untility of the actions which differs between pref weights in the same region (correspond the the same strickly optimal policy)
-      What are we using? The centroid?
-    When doing inference can we take into account the difference between the candiate weight and the centroid? This might allow us to account for the fact the softmax policy we have stored (one for the whole region, probably the centroid) might be very different from the softmax that WOULD be assciated with the actual candiate weight (if we had that softmax policy)
-    
-We are comparing every demo, which actually represents a single preference weight, to the policy for a centroids used to generate the softmax policy we have saved. We are assuming that the centroid policy that was most likely to generate/explain the demo is the same as the liklihood that the demonstrators single preference weight falls within the centroid's region. This is not true and fucking us up. Just because the centroid softmax policy is nearly identical to the pareto optimal policy doesn't mean that the centroid's small probability nuances are representative of the region as a whole.
-
-Also I think I'm using the word CCS wrong. I've been calling the set of softmax nearly optimal policies as the CCS or pareto front. That is not strictly accurate and I think is leading to confusion.
