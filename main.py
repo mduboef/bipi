@@ -40,7 +40,7 @@ from config import (POLICY_BETA, DEMO_BETA, TRAJ_PER_USER, NUM_USERS,
 	DWPI_GRANULARITY, DWPI_N_EPISODES, DWPI_NDEMOS_TRAIN, DWPI_AUGMENT,
 	DWPI_SF_GAMMA, DWPI_HIDDEN_DIM, DWPI_EPOCHS, DWPI_LR, DWPI_NDEMOS_INFER)
 from helpers import makeEnv, printEnvInfo, runEpisode, findRegion, renderTrajectory
-from algs.ccs import buildCCS, printCCS, saveCCS, loadCCS
+from algs.ccs import buildCCS, printCCS, saveCCS, loadCCS, trainSoftmaxPolicies, saveSoftmaxPolicies, loadSoftmaxPolicies
 from algs.bipi import runBIPI, selectMapPolicy, selectMeanWeightPolicy, selectEUPolicy, selectCVaRPolicy, printBIPIResults, printBIPIAccuracy
 from algs.dwpi import (ENCODINGS, getWeightVecs, getGridDims,
 	trainDWMOTQ, saveDWMOTQ, loadDWMOTQ, lookupQTable,
@@ -81,16 +81,20 @@ def main():
 
 
 	if methodName == "ccs":
-		# if ccs.pkl doesn't exist compute it
-		print(f"Calculating CCS (beta = {POLICY_BETA}) ...")
-		ccs = buildCCS(env, nEpisodes=150000)
-		printCCS(ccs)
 		saveDir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'ccsResults', envName)
-		saveCCS(ccs, saveDir)
-		
-		# TODO find the softmax optimal policy for every centroid weight (using POLICY_BETA)
-		# TODO save that set of softmax policies to a new file in ccsResults
-		# these softmax policies will be used in BIPI to calculate a posterior over regions
+		ccsPath = os.path.join(saveDir, 'ccs.pkl')
+		if os.path.exists(ccsPath):
+			print("Loading existing CCS ...")
+			ccs = loadCCS(saveDir)['regions']
+		else:
+			print(f"Calculating CCS (beta = {POLICY_BETA}) ...")
+			ccs = buildCCS(env, nEpisodes=150000)
+			printCCS(ccs)
+			saveCCS(ccs, saveDir)
+
+		print(f"Training softmax policies at region centroids (beta = {POLICY_BETA}) ...")
+		softmaxPolicies = trainSoftmaxPolicies(env, ccs, POLICY_BETA)
+		saveSoftmaxPolicies(softmaxPolicies, saveDir)
 
 
 	elif methodName == "bipi":
@@ -98,6 +102,15 @@ def main():
 		saveDir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'dwpiResults', envName)
 		ccs = loadCCS(ccsDir)
 		regions = ccs['regions']
+
+		softmaxPath = os.path.join(ccsDir, 'softmaxPolicies.pkl')
+		if not os.path.exists(softmaxPath):
+			print(f"Error: softmax policies not found at {softmaxPath}. Run 'ccs' mode first.")
+			sys.exit(1)
+		print("Loading softmax policies ...")
+		softmaxPolicies = loadSoftmaxPolicies(ccsDir)
+		for sp in softmaxPolicies:
+			regions[sp['regionIdx']]['policy'] = sp['policy']
 
 		dwmotqPath = os.path.join(saveDir, 'dwmotq.pkl')
 		if not os.path.exists(dwmotqPath):

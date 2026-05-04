@@ -1,6 +1,7 @@
 import os
 import pickle
 import numpy as np
+from colorama import Fore
 from collections import defaultdict
 from morl_baselines.multi_policy.linear_support.linear_support import LinearSupport
 
@@ -126,7 +127,7 @@ def buildCCS(env, epsilon=1e-4, nEpisodes=10000, alpha=0.1, gamma=1.0):
 		paretoFront = env.unwrapped.pareto_front(gamma=gamma)
 		for trueRv in paretoFront:
 			if not any(np.allclose(trueRv, e['returnVec'], atol=0.5) for e in dedupEntries):
-				print(f"  Warning: Pareto-optimal policy {np.round(trueRv, 4)} not found in CCS")
+				print(f"Warning: Pareto-optimal policy {np.round(trueRv, 4)} not found in CCS")
 	except AttributeError:
 		pass
 
@@ -172,5 +173,49 @@ def saveCCS(ccs, saveDir):
 # returns {'regions': list of dicts}
 def loadCCS(saveDir):
 	loadPath = os.path.join(saveDir, 'ccs.pkl')
+	with open(loadPath, 'rb') as f:
+		return pickle.load(f)
+
+
+# converts Q-table to softmax policy: {state -> prob array}
+# action probs are proportional to exp(beta * Q(s,a) @ weight)
+def qTableToSoftmaxPolicy(qTable, weight, beta):
+	policy = {}
+	for s, qVecs in qTable.items():
+		logits = beta * (qVecs @ weight)
+		logits -= logits.max()
+		probs = np.exp(logits)
+		probs /= probs.sum()
+		policy[s] = probs
+	return policy
+
+
+# trains one softmax policy per CCS region at that region's centroid weight
+# returns list of dicts: {regionIdx, centroid, policy}
+def trainSoftmaxPolicies(env, ccs, beta, nEpisodes=10000, alpha=0.1, gamma=1.0):
+	nObj = env.unwrapped.reward_space.shape[0]
+	softmaxPolicies = []
+	for k, region in enumerate(ccs):
+		centroid = region['centroid']
+		print(f"  region {k}: training at centroid {np.round(centroid, 4)} ...")
+		qTable = moQLearning(env, centroid, nObj, nEpisodes=nEpisodes, alpha=alpha, gamma=gamma)
+		policy = qTableToSoftmaxPolicy(qTable, centroid, beta)
+		softmaxPolicies.append({'regionIdx': k, 'centroid': centroid, 'policy': policy})
+	return softmaxPolicies
+
+
+# saves softmax policies to saveDir/softmaxPolicies.pkl
+def saveSoftmaxPolicies(softmaxPolicies, saveDir):
+	os.makedirs(saveDir, exist_ok=True)
+	savePath = os.path.join(saveDir, 'softmaxPolicies.pkl')
+	with open(savePath, 'wb') as f:
+		pickle.dump(softmaxPolicies, f)
+	print(f"  softmax policies saved → {savePath}")
+
+
+# loads softmax policies from saveDir/softmaxPolicies.pkl
+# returns list of dicts: {regionIdx, centroid, policy}
+def loadSoftmaxPolicies(saveDir):
+	loadPath = os.path.join(saveDir, 'softmaxPolicies.pkl')
 	with open(loadPath, 'rb') as f:
 		return pickle.load(f)
