@@ -4,11 +4,11 @@ import numpy as np
 
 from config import (POLICY_BETA, DEMO_BETA, NUM_USERS, TRAJ_PER_USER,
 	DWPI_GRANULARITY, DWPI_SF_GAMMA, DWPI_HIDDEN_DIM)
-from helpers import runEpisode, findRegion
+from helpers import runEpisode, findRegion, getStateSize, obsToStateIdx
 from algs.ccs import loadCCS, loadSoftmaxPolicies
 from algs.bipi import (runBIPI, selectMapPolicy, selectMeanWeightPolicy,
 	selectEUPolicy, selectCVaRPolicy)
-from algs.dwpi import (ENCODINGS, getWeightVecs, getGridDims, lookupQTable,
+from algs.dwpi import (ENCODINGS, getWeightVecs, lookupQTable,
 	makeBoltzmannDemoPolicy, encodeDemos, loadDWMOTQ, loadModels, inferWeight)
 
 _COMPARE_METHODS = [
@@ -32,7 +32,7 @@ def printCompareResults(results):
 		print(f"  {label:<18}  {nCorrect:>3}/{nUsers}  ({nCorrect/nUsers*100:>5.1f}%)  {meanGap:>+.4f}")
 
 
-def _evaluateUser(env, regions, qTables, models, weightVecs, nRows, nCols, rho, user):
+def _evaluateUser(env, regions, qTables, models, weightVecs, stateSize, rho, user):
 	nObj       = len(regions[0]['returnVec'])
 	prefWeight = np.random.dirichlet(np.ones(nObj))
 
@@ -52,8 +52,9 @@ def _evaluateUser(env, regions, qTables, models, weightVecs, nRows, nCols, rho, 
 		'bipi_cvar': selectCVaRPolicy(posterior, regions, 0.05),
 	}
 
+	obsToIdx = lambda obs: obsToStateIdx(obs, env)
 	for enc in ENCODINGS:
-		feat      = encodeDemos(demos, enc, nRows, nCols, DWPI_SF_GAMMA)
+		feat      = encodeDemos(demos, enc, stateSize, obsToIdx, DWPI_SF_GAMMA)
 		infW      = inferWeight(models[enc], feat)
 		infRegion = findRegion(infW, regions)
 		assigned['dwpi_' + enc] = next(i for i, r in enumerate(regions) if r is infRegion)
@@ -80,10 +81,9 @@ def runCompare(env, ccsDir, saveDir):
 	for sp in softmaxPolicies:
 		regions[sp['regionIdx']]['policy'] = sp['policy']
 
-	nObj         = len(regions[0]['returnVec'])
-	nRows, nCols = getGridDims(env)
-	stateSize    = nRows * nCols
-	weightVecs   = getWeightVecs(DWPI_GRANULARITY)
+	nObj      = len(regions[0]['returnVec'])
+	stateSize = getStateSize(env)
+	weightVecs = getWeightVecs(DWPI_GRANULARITY)
 	rho          = DEMO_BETA / POLICY_BETA
 
 	dwmotqPath = os.path.join(saveDir, 'dwmotq.pkl')
@@ -102,7 +102,7 @@ def runCompare(env, ccsDir, saveDir):
 
 	results = []
 	for user in range(NUM_USERS):
-		result = _evaluateUser(env, regions, qTables, models, weightVecs, nRows, nCols, rho, user)
+		result = _evaluateUser(env, regions, qTables, models, weightVecs, stateSize, rho, user)
 		results.append(result)
 
 	printCompareResults(results)

@@ -36,13 +36,13 @@
 import os
 import sys
 import numpy as np
-from config import (POLICY_BETA, DEMO_BETA, TRAJ_PER_USER, NUM_USERS,
+from config import (CCS_EPISODES, POLICY_BETA, DEMO_BETA, TRAJ_PER_USER, NUM_USERS,
 	DWPI_GRANULARITY, DWPI_N_EPISODES, DWPI_NDEMOS_TRAIN, DWPI_AUGMENT,
 	DWPI_SF_GAMMA, DWPI_HIDDEN_DIM, DWPI_EPOCHS, DWPI_LR, DWPI_NDEMOS_INFER)
-from helpers import makeEnv, printEnvInfo, runEpisode, findRegion, renderTrajectory
+from helpers import makeEnv, printEnvInfo, runEpisode, findRegion, renderTrajectory, getStateSize
 from algs.ccs import buildCCS, printCCS, saveCCS, loadCCS, trainSoftmaxPolicies, saveSoftmaxPolicies, loadSoftmaxPolicies
 from algs.bipi import runBIPI, selectMapPolicy, selectMeanWeightPolicy, selectEUPolicy, selectCVaRPolicy, printBIPIResults, printBIPIAccuracy
-from algs.dwpi import (ENCODINGS, getWeightVecs, getGridDims,
+from algs.dwpi import (ENCODINGS, getWeightVecs,
 	trainDWMOTQ, saveDWMOTQ, loadDWMOTQ, lookupQTable,
 	makeBoltzmannDemoPolicy, makeGreedyPolicy,
 	buildDWPIDataset, saveDataset, loadDataset,
@@ -67,6 +67,12 @@ def main():
 		sys.exit(1)
 	else: envName = sys.argv[1]
 
+	if envName not in CCS_EPISODES:
+		print(f"Error: no CCS episode count configured for '{envName}'.")
+		print(f"  Add an entry to CCS_EPISODES in config.py and re-run.")
+		sys.exit(1)
+	nEpisodes = CCS_EPISODES[envName]
+
 	if sys.argv[2] not in methodNames:
 		print(f"Usage: python main.py <envName> <methodName>")
 		print(f"  where methodName is one of: {methodNames}")
@@ -77,7 +83,7 @@ def main():
 	renderBool = ("-render" in sys.argv)
 	
 
-	env = makeEnv()
+	env = makeEnv(envName)
 	printEnvInfo(env, envName)
 
 
@@ -89,12 +95,12 @@ def main():
 			ccs = loadCCS(saveDir)['regions']
 		else:
 			print(f"Calculating CCS (beta = {POLICY_BETA}) ...")
-			ccs = buildCCS(env, nEpisodes=150000)
+			ccs = buildCCS(env, nEpisodes=nEpisodes)
 			printCCS(ccs)
 			saveCCS(ccs, saveDir)
 
 		print(f"Training softmax policies at region centroids (beta = {POLICY_BETA}) ...")
-		softmaxPolicies = trainSoftmaxPolicies(env, ccs, POLICY_BETA)
+		softmaxPolicies = trainSoftmaxPolicies(env, ccs, POLICY_BETA, nEpisodes=nEpisodes)
 		saveSoftmaxPolicies(softmaxPolicies, saveDir)
 
 
@@ -162,10 +168,9 @@ def main():
 		saveDir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'dwpiResults', envName)
 		ccs     = loadCCS(ccsDir)
 		regions = ccs['regions']
-		nObj    = len(regions[0]['returnVec'])
-		nRows, nCols = getGridDims(env)
-		stateSize    = nRows * nCols
-		weightVecs   = getWeightVecs(DWPI_GRANULARITY)
+		nObj      = len(regions[0]['returnVec'])
+		stateSize = getStateSize(env)
+		weightVecs = getWeightVecs(DWPI_GRANULARITY)
 
 		# phase 1: DWMOTQ — train or load one Q-table per discretized weight
 		dwmotqPath = os.path.join(saveDir, 'dwmotq.pkl')

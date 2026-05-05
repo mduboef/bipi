@@ -12,7 +12,7 @@ from config import (
 	DWPI_AUGMENT, DWPI_SF_GAMMA, DWPI_HIDDEN_DIM,
 	DWPI_EPOCHS, DWPI_LR, DWPI_NDEMOS_INFER,
 )
-from helpers import runEpisode
+from helpers import runEpisode, getStateSize, obsToStateIdx
 
 ENCODINGS = ('return', 'stateFreq', 'sf')
 
@@ -38,12 +38,6 @@ def getWeightVecs(granularity=DWPI_GRANULARITY):
 def findNearestWeight(w, weightVecs):
 	dists = [float(np.linalg.norm(np.asarray(wv) - np.asarray(w))) for wv in weightVecs]
 	return weightVecs[int(np.argmin(dists))]
-
-
-# returns (nRows, nCols) from observation space upper bounds
-def getGridDims(env):
-	hi = env.observation_space.high
-	return int(hi[0]) + 1, int(hi[1]) + 1
 
 
 def _wKey(w):
@@ -118,12 +112,14 @@ def lookupQTable(qTables, w, weightVecs):
 # ─────────────────────────────────────────────────────────────
 
 # generates nDemos Boltzmann-rational episodes and returns their averaged encodings
-def _encodeAvgBatch(env, qTable, nDemos, sfGamma, nRows, nCols):
+def _encodeAvgBatch(env, qTable, nDemos, sfGamma):
+	stateSize = getStateSize(env)
+	obsToIdx  = lambda obs: obsToStateIdx(obs, env)
 	demoPolicy = makeBoltzmannDemoPolicy(qTable, DEMO_BETA)
 	trajs = [runEpisode(env, demoPolicy)[0] for _ in range(nDemos)]
-	retVec  = encodeDemos(trajs, 'return',    nRows, nCols, sfGamma)
-	freqVec = encodeDemos(trajs, 'stateFreq', nRows, nCols, sfGamma)
-	sfVec   = encodeDemos(trajs, 'sf',        nRows, nCols, sfGamma)
+	retVec  = encodeDemos(trajs, 'return',    stateSize, obsToIdx, sfGamma)
+	freqVec = encodeDemos(trajs, 'stateFreq', stateSize, obsToIdx, sfGamma)
+	sfVec   = encodeDemos(trajs, 'sf',        stateSize, obsToIdx, sfGamma)
 	return retVec, freqVec, sfVec
 
 
@@ -153,31 +149,30 @@ def makeGreedyPolicy(qTable):
 
 # encodes pre-run trajectories (list of (obs, action, reward) tuples each) into a single feature vector
 # used at DWPI inference time with trajectories collected from the environment
-def encodeDemos(demos, encoding, nRows, nCols, sfGamma=DWPI_SF_GAMMA):
-	nStates = nRows * nCols
+# obsToIdx : callable obs -> int that maps an observation to a flat state index
+def encodeDemos(demos, encoding, stateSize, obsToIdx, sfGamma=DWPI_SF_GAMMA):
 	feats = []
 	for traj in demos:
 		if encoding == 'return':
-			feat = np.zeros(2)
+			feat = np.zeros_like(traj[0][2]) if traj else np.zeros(2)
 			for _, _, r in traj:
 				feat += r
 		elif encoding == 'stateFreq':
-			feat = np.zeros(nStates)
+			feat = np.zeros(stateSize)
 			for obs, _, _ in traj:
-				feat[int(obs[0]) * nCols + int(obs[1])] += 1.0
+				feat[obsToIdx(obs)] += 1.0
 		elif encoding == 'sf':
-			feat = np.zeros(nStates)
+			feat = np.zeros(stateSize)
 			for t, (obs, _, _) in enumerate(traj):
-				feat[int(obs[0]) * nCols + int(obs[1])] += sfGamma ** t
+				feat[obsToIdx(obs)] += sfGamma ** t
 		feats.append(feat)
 	return np.mean(feats, axis=0).astype(np.float32)
 
 
 # generates and returns the averaged test encodings for one user using the DWMOTQ agent
 def generateTestEncodings(env, qTables, trueW, nDemos, sfGamma, weightVecs):
-	nRows, nCols = getGridDims(env)
 	qTable = lookupQTable(qTables, trueW, weightVecs)
-	retVec, freqVec, sfVec = _encodeAvgBatch(env, qTable, nDemos, sfGamma, nRows, nCols)
+	retVec, freqVec, sfVec = _encodeAvgBatch(env, qTable, nDemos, sfGamma)
 	return {'return': retVec, 'stateFreq': freqVec, 'sf': sfVec}
 
 
@@ -190,7 +185,6 @@ def generateTestEncodings(env, qTables, trueW, nDemos, sfGamma, weightVecs):
 def buildDWPIDataset(env, qTables, granularity=DWPI_GRANULARITY, nDemos=DWPI_NDEMOS_TRAIN,
                      augmentFactor=DWPI_AUGMENT, sfGamma=DWPI_SF_GAMMA):
 	weightVecs = getWeightVecs(granularity)
-	nRows, nCols = getGridDims(env)
 	total = len(weightVecs) * augmentFactor
 	Xret, Xfreq, Xsf, Y = [], [], [], []
 	count = 0
@@ -198,7 +192,7 @@ def buildDWPIDataset(env, qTables, granularity=DWPI_GRANULARITY, nDemos=DWPI_NDE
 	for w in weightVecs:
 		qTable = qTables[_wKey(w)]
 		for _ in range(augmentFactor):
-			retVec, freqVec, sfVec = _encodeAvgBatch(env, qTable, nDemos, sfGamma, nRows, nCols)
+			retVec, freqVec, sfVec = _encodeAvgBatch(env, qTable, nDemos, sfGamma)
 			Xret.append(retVec)
 			Xfreq.append(freqVec)
 			Xsf.append(sfVec)

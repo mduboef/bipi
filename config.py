@@ -1,9 +1,9 @@
-# action index -> human-readable label
-ACTION_LABELS = {0: "up", 1: "down", 2: "left", 3: "right"}
-
-# reward vector indices
-TREASURE_IDX = 0
-TIME_IDX = 1
+# episodes used for CCS Q-learning (buildCCS + trainSoftmaxPolicies) per environment
+# add an entry here before running any mode on a new environment
+CCS_EPISODES = {
+	"deep-sea-treasure-v0": 150000,
+	"fishwood-v0":          30000,
+}
 
 POLICY_BETA = 20.0
 DEMO_BETA = 20.0
