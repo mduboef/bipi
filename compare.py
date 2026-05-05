@@ -5,7 +5,7 @@ import numpy as np
 from config import (POLICY_BETA, DEMO_BETA, NUM_USERS, TRAJ_PER_USER,
 	DWPI_GRANULARITY, DWPI_SF_GAMMA, DWPI_HIDDEN_DIM)
 from helpers import runEpisode, findRegion
-from algs.ccs import loadCCS
+from algs.ccs import loadCCS, loadSoftmaxPolicies
 from algs.bipi import (runBIPI, selectMapPolicy, selectMeanWeightPolicy,
 	selectEUPolicy, selectCVaRPolicy)
 from algs.dwpi import (ENCODINGS, getWeightVecs, getGridDims, lookupQTable,
@@ -65,9 +65,9 @@ def _evaluateUser(env, regions, qTables, models, weightVecs, nRows, nCols, rho, 
 		                   'eu':      float(np.dot(prefWeight, regions[idx]['returnVec'])),
 		                   'correct': idx == trueRegionIdx}
 
-	print(f"  user {user:>3}: region {trueRegionIdx}  "
-	      + '  '.join(f"{k}: {'✓' if v['correct'] else '✗'}"
-	                  for k, v in userResult.items() if isinstance(v, dict)))
+	# print(f"  user {user:>3}: region {trueRegionIdx}  "
+	#       + '  '.join(f"{k}: {'✓' if v['correct'] else '✗'}"
+	#                   for k, v in userResult.items() if isinstance(v, dict)))
 	return userResult
 
 
@@ -75,6 +75,10 @@ def _evaluateUser(env, regions, qTables, models, weightVecs, nRows, nCols, rho, 
 def runCompare(env, ccsDir, saveDir):
 	ccs = loadCCS(ccsDir)
 	regions = ccs['regions']
+
+	softmaxPolicies = loadSoftmaxPolicies(ccsDir)
+	for sp in softmaxPolicies:
+		regions[sp['regionIdx']]['policy'] = sp['policy']
 
 	nObj         = len(regions[0]['returnVec'])
 	nRows, nCols = getGridDims(env)

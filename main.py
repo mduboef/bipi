@@ -56,7 +56,8 @@ from compare import runCompare
 def main():
 
 	# stores names of environments to run experiments on
-	envNames = ["deep-sea-treasure-v0"]
+	# TODO adapt existing code to work with fishwood-v0 environment
+	envNames = ["deep-sea-treasure-v0", "fishwood-v0", "resource-gathering-v0"]
 	methodNames = ["ccs", "bipi", "dwpi", "compare"]
 
 
