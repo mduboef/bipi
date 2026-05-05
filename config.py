@@ -2,7 +2,15 @@
 # add an entry here before running any mode on a new environment
 CCS_EPISODES = {
 	"deep-sea-treasure-v0": 150000,
-	"fishwood-v0":          30000,
+	"fishwood-v0":          40000,
+}
+
+# discount factor for CCS Q-learning per environment
+# use gamma < 1 for environments that only truncate (never terminate naturally) to avoid
+# the gamma=1 convergence trap where self-referential Bellman updates give wrong action ordering
+CCS_GAMMA = {
+	"deep-sea-treasure-v0": 1.0,   # terminates naturally at treasure; gamma=1 is correct
+	"fishwood-v0":          0.99,  # only truncates at 200 steps; cycling states need gamma < 1
 }
 
 POLICY_BETA = 20.0

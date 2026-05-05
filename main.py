@@ -36,7 +36,7 @@
 import os
 import sys
 import numpy as np
-from config import (CCS_EPISODES, POLICY_BETA, DEMO_BETA, TRAJ_PER_USER, NUM_USERS,
+from config import (CCS_EPISODES, CCS_GAMMA, POLICY_BETA, DEMO_BETA, TRAJ_PER_USER, NUM_USERS,
 	DWPI_GRANULARITY, DWPI_N_EPISODES, DWPI_NDEMOS_TRAIN, DWPI_AUGMENT,
 	DWPI_SF_GAMMA, DWPI_HIDDEN_DIM, DWPI_EPOCHS, DWPI_LR, DWPI_NDEMOS_INFER)
 from helpers import makeEnv, printEnvInfo, runEpisode, findRegion, renderTrajectory, getStateSize
@@ -56,7 +56,7 @@ from compare import runCompare
 def main():
 
 	# stores names of environments to run experiments on
-	# TODO adapt existing code to work with fishwood-v0 environment
+	# TODO adapt existing code to work with resource-gathering-v0 environment
 	envNames = ["deep-sea-treasure-v0", "fishwood-v0", "resource-gathering-v0"]
 	methodNames = ["ccs", "bipi", "dwpi", "compare"]
 
@@ -67,11 +67,12 @@ def main():
 		sys.exit(1)
 	else: envName = sys.argv[1]
 
-	if envName not in CCS_EPISODES:
-		print(f"Error: no CCS episode count configured for '{envName}'.")
-		print(f"  Add an entry to CCS_EPISODES in config.py and re-run.")
+	if envName not in CCS_EPISODES or envName not in CCS_GAMMA:
+		print(f"Error: no CCS config for '{envName}'.")
+		print(f"  Add entries to CCS_EPISODES and CCS_GAMMA in config.py and re-run.")
 		sys.exit(1)
 	nEpisodes = CCS_EPISODES[envName]
+	ccsGamma  = CCS_GAMMA[envName]
 
 	if sys.argv[2] not in methodNames:
 		print(f"Usage: python main.py <envName> <methodName>")
@@ -94,13 +95,13 @@ def main():
 			print("Loading existing CCS ...")
 			ccs = loadCCS(saveDir)['regions']
 		else:
-			print(f"Calculating CCS (beta = {POLICY_BETA}) ...")
-			ccs = buildCCS(env, nEpisodes=nEpisodes)
+			print(f"Calculating CCS (beta = {POLICY_BETA}, gamma = {ccsGamma}) ...")
+			ccs = buildCCS(env, nEpisodes=nEpisodes, gamma=ccsGamma)
 			printCCS(ccs)
 			saveCCS(ccs, saveDir)
 
-		print(f"Training softmax policies at region centroids (beta = {POLICY_BETA}) ...")
-		softmaxPolicies = trainSoftmaxPolicies(env, ccs, POLICY_BETA, nEpisodes=nEpisodes)
+		print(f"Training softmax policies at region centroids (beta = {POLICY_BETA}, gamma = {ccsGamma}) ...")
+		softmaxPolicies = trainSoftmaxPolicies(env, ccs, POLICY_BETA, nEpisodes=nEpisodes, gamma=ccsGamma)
 		saveSoftmaxPolicies(softmaxPolicies, saveDir)
 
 

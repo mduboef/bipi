@@ -111,6 +111,54 @@ def printBIPIResults(posterior, regions, trueRegionIdx, prefWeight, mapIdx, mean
 	print(f"    CVaR({cvarAlpha})     : region {cvarIdx:>3}  ({'correct' if cvarIdx == trueRegionIdx else 'wrong'})")
 
 
+# prints each region's softmax policy probabilities alongside empirical demo action frequencies
+# reveals whether the softmax policies and demo generator agree on which actions are preferred
+def debugBIPI(regions, demos):
+	# infer nActions from the first populated policy entry
+	nActions = None
+	for region in regions:
+		if region.get('policy'):
+			nActions = len(next(iter(region['policy'].values())))
+			break
+	if nActions is None:
+		print("  debugBIPI: no softmax policies loaded")
+		return
+
+	# empirical per-state action counts from demos
+	stateCounts = {}
+	for traj in demos:
+		for obs, action, _ in traj:
+			s = tuple(obs)
+			if s not in stateCounts:
+				stateCounts[s] = np.zeros(nActions)
+			stateCounts[s][action] += 1
+
+	stateFreqs = {s: counts / counts.sum() for s, counts in stateCounts.items()}
+	allStates  = sorted(
+		set(stateFreqs.keys()) | {s for r in regions for s in r.get('policy', {})}
+	)
+
+	print(f"\n  === BIPI debug: softmax policies vs demo action frequencies ===")
+	for s in allStates:
+		print(f"  state {s}:")
+		if s in stateFreqs:
+			f = stateFreqs[s]
+			nVisits = int(stateCounts[s].sum())
+			print(f"    demo ({nVisits:>4} visits): " + "  ".join(f"A{a}: {f[a]:.3f}" for a in range(nActions)))
+		else:
+			print(f"    demo: state not visited")
+		for k, region in enumerate(regions):
+			c = region['centroid']
+			policy = region.get('policy', {})
+			if s in policy:
+				p = policy[s]
+				pref = int(np.argmax(p))
+				print(f"    rgn {k} (c={c[0]:.3f}):       " + "  ".join(f"A{a}: {p[a]:.3f}" for a in range(nActions)) + f"  [prefers A{pref}]")
+			else:
+				print(f"    rgn {k} (c={c[0]:.3f}):       [state not in policy]")
+	print()
+
+
 # prints an accuracy summary across all users for each policy selection method
 def printBIPIAccuracy(userResults):
 	nUsers   = len(userResults)
