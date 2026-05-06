@@ -1,0 +1,501 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb, amsthm}
+\usepackage{scrextend}
+\usepackage{enumitem}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{hyperref}
+\usepackage{natbib}
+\usepackage{parskip}
+\usepackage{titlesec}
+\usepackage{graphicx}
+\usepackage{bm}
+
+\newtheorem{assumption}{Assumption}
+\newtheorem{definition}{Definition}
+\newtheorem{proposition}{Proposition}
+
+\DeclareMathOperator*{\argmax}{arg\,max}
+\DeclareMathOperator{\LSE}{LogSumExp}       % i don't like you using this as an operator please just show it in math
+\DeclareMathOperator{\Vol}{Vol}
+\DeclareMathOperator{\CVaR}{CVaR}
+
+\titlespacing*{\section}{0pt}{1.2ex plus 0.5ex minus 0.2ex}{0.6ex plus 0.2ex}
+\setlength{\parskip}{0.4em}
+
+\title{Multi-Objective Preference Inference from Demonstration}
+\author{Mason duBoef}
+\date{}
+
+\begin{document}
+\maketitle
+\vspace{-2em}
+
+
+\section*{Abstract}
+We study the problem of inferring a demonstrator's latent preferences over multiple objectives and assigning them an optimal policy from a precomputed Convex Coverage Set (CCS). We introduce Bayesian Inverse Preference Inference (BIPI), which maintains a posterior over CCS regions which is iteratively updated after observing each action taken. We also extend an existing approach, Dynamic Weight-based Preference Inference (DWPI), using a successor-feature encoding of trajectories alongside its return and state-frequency-based variants. We compare the performance of BIPI and DWPI-based policy assignment across two environments: Deep Sea Treasure and Fishwood. BIPI is competitive with DWPI but does not consistently outperform it.
+
+\section{Introduction}
+Many real-world decision-making problems are fundamentally multi-objective problems. These are problems where a trade-off between different objectives is inevitable. For example, driving a car can be viewed as having two competing objectives, getting to your destination quickly and getting there safely. Individual drivers will differ in how much they value these two objectives, speed and safety.
+
+In the field of multi-objective reinforcement learning (MORL) there are numerous techniques for efficiently computing the convex coverage sets (CCS) for multi-objective problems \cite{felten2023}. A convex coverage set is the minimal set of policies such that for any linear preference weight $w$ on the simplex, at least one policy in the set maximizes utility over all policies. Utility here is the returns achieved over multiple objectives times their preferences over the objectives.
+
+With a precomputed CCS we can assign a policy that is perfectly optimal for any given set of preferences. However, accurately eliciting a person's preference is very challenging and failure can lead to high disutility. Three approaches are typically taken to elicit preferences over multiple objectives:
+
+\begin{itemize}
+    \item \textbf{Direct Numerical Reporting:} Users report their preferences directly and numerically over the objectives (i.e.``I care 30\% about speed and 70\% about safety'').
+    \item \textbf{Reporting Preferences Over Observed Segments:} Users observe multiple trajectories and rank them by preference.
+    \item \textbf{Demonstration-based Inference:} Users record a demonstration which is used to infer their latent preferences.
+\end{itemize}
+
+Direct numerical reporting is very simple and easy to execute but not very reliable in practice. Oftentimes direct reporting will result in the user receiving a policy that is out of line with their latent values. Accurately reporting latent preferences becomes even harder for users when numerous objectives are involved.
+
+The most popular and well-studied approach is to prompt the user for their preference over various segments. These are often segments directly generated from rolling out CCS policies but they could be any segment for which a known preference is being optimized. This can result in accurate inference but often requires querying the user for many comparisons, a process that can be time-consuming and difficult depending on the task.
+
+Demonstration-based Inference offers an appealing alternative. Demonstrations implicitly reflect latent preferences even under suboptimal performance. Furthermore, demonstrations are easy and natural to record in many settings. For example, if we want our self-driving car to understand the preferences of the user who has just stepped inside, it would be fairly easy for the user to record a short demonstration, driving the car before letting the self-driving car deploy a policy that maximizes the inferred preference. In settings like this, demonstrations are rich in behavioral/preference data considering how little of the user's time is needed. The action taken at each timestep is a data point revealing a bit of information on the demonstrator's latent preferences. Furthermore, in many domains demonstrations are plentiful in the observable world. People are constantly generating demonstration data as they go about. So, in some domains it may be possible to record/observe naturally occurring human data rather than forcing a user to sit in a relatively contrived environment and report their preferences over segments. One can imagine a future where self-driving cars observe the behavior of other human-driven cars on the road and intuit the drivers' latent preferences without any traditional preference reporting. Despite these advantages, demonstration-based multi-objective preference inference remains relatively unexplored with few approaches proposed.
+
+We introduce a new method for inferring multi-objective preferences based on demonstration data. Our method, Bayesian Inverse Preference Inference (BIPI), involves looking at the action taken at each time step in demonstration data, comparing that action against a set of softmax reference policies, derived from the CCS, and updating a posterior over all regions of the CCS. The result is a posterior over regions of the CCS indicating which region the demonstrator's latent preference is likely to fall in. We experiment with four different methods for selecting a policy based on the resulting posterior. Our results are compared to a baseline approach, Dynamically Weighted Preference Inference (DWPI). We test against three different versions of DWPI, based on different trajectory encodings. Among them is a new version of DWPI we propose, encoding trajectories as a set of successor features rather than a vector of returns or state frequencies.
+
+\section{Related Work}
+
+We are aware of two existing approaches for inferring multi-objective preferences from demonstration data:
+
+\begin{itemize}
+    \item \textbf{Inverse Reinforcement Learning (IRL) Based Inference \cite{ikenaga2018, takayama2022}:} Apprenticeship learning IRL is adapted for multi-objective preference inference by setting the IRL features to the multi-objective reward vector itself. Thus coefficients optimized by IRL are the preference weights. The algorithm iteratively guesses a candidate weight, trains an RL agent under the scalarized reward, and refines the weight based on the gap between the resulting policy's expected return vector and the demonstrator's, until the gap shrinks below a certain threshold.
+
+    \item \textbf{Dynamic Weight-based Preference Inference (DWPI) \cite{lu2023}:} The preference space is discretized into a finite set of weight vectors. Through reinforcement learning (RL), an agent is trained that produces near-optimal behavior under any discretized weight. This is done by calculating tabular Q-tables indexed by preference weight. The trained agent is then used to generate labeled demonstrations spanning the discretized preference space. These are encoded as either a return vector or a state-frequency vector. A feedforward network is trained to map encoded trajectories to preference weights. At inference time a new demonstration is encoded and pushed through the network in a single forward pass, predicting the demonstrator's preference weight.
+\end{itemize}
+
+IRL-based inference approaches require a large amount of RL training for each single inference. DWPI, on the other hand, has near-instantaneous inference. However, it uses the trajectory encodings that strip the trajectories of action-by-action details. The accuracy of DWPI is bottlenecked by these encodings' ability to capture relevant details about the demonstrator's behavior. In stochastic environments, two very different series of actions, reflecting two very different latent preferences can lead to the same returns. Instead of relying on embeddings, we consider what a Boltzmann-rational actor would be likely to do at a given state under different candidate preference weights, and compare those probabilities against the action we observe the demonstrator taking. This leverages the rich action-by-action detail inherent to demonstration data, producing accurate inference of demonstrators' latent preferences.
+
+
+\section{Problem Definition}
+
+\textbf{Hypotheses:}
+\begin{enumerate}
+  \item BIPI-based policy selection outperforms DWPI-based policy selection across environments.
+
+  \item BIPI-based policy selection outperforms DWPI-based policy selection by a larger margin in highly stochastic environments than in deterministic ones.
+  
+  \item DWPI-based policy selection performs better when trajectories are encoded as a vector of successor features rather than a vector of returns or state frequencies. This will hold across all environments.
+\end{enumerate}
+
+\textbf{Evaluation Metrics:}
+
+Accuracy and mean utility gap serve as the metrics through which we evaluate the performance of our various methods for inferring demonstrator preferences and assigning policies.
+
+\begin{addmargin}[2em]{0em}
+    \textbf{Accuracy:} The rate at which we assign the demonstrator a policy from the CCS that is optimal under their latent preferences.\\
+    \textbf{Mean utility gap:} Utility gap is defined as the demonstrator's expected utility under the assigned policy minus their expected utility under the optimal policy. Mean utility gap is simply the average utility gap across all demonstrators in our test set.
+\end{addmargin}
+
+
+
+
+\newpage
+\section{DWPI Methodology}
+% outline how DWPI base preference inference works/how the inference network is trained
+
+DWPI \cite{lu2023} trains a neural network to predict a demonstrator's latent preference weights from encoded trajectories. Once trained, inference can be performed with a single forward pass.
+
+\textbf{Step 1: Discretize the preference space.} The preference space is uniformly discretized into $101$ weight vectors for our two-objective environments.
+
+\textbf{Step 2: Train a Q-table per discretized weight (DWMOTQ).} For each discretized weight $\mathbf{w}$, a Q-learning agent is trained to maximize the scalarized reward. These Q-tables reflect the assumption of a Boltzmann-rational demonstrator with rationality $\beta_{\text{demo}}$.
+
+\textbf{Step 3: Build the training dataset.} For each discretized weight $\mathbf{w}$ we form a Boltzmann-rational demonstration policy with rationality $\beta_{\text{demo}}$. These policies are calculated based on the corresponding Q-table. Roll out $100$ trajectories under each policy, encode each trajectory in three ways (listed below), and average the encoded vectors across the $100$ trajectories to produce one vector for each encoding. This rollout-and-average procedure is repeated $50$ times per weight as data augmentation, giving $101 \times 50 = 5{,}050$ training examples per encoding, each paired with its corresponding preference weight $\mathbf{w}$.
+
+The three trajectory encodings are:
+\begin{itemize}
+    \item \textbf{Return vector} (Lu et al.): cumulative reward $\sum_t \mathbf{r}_t$.
+    \item \textbf{State frequency vector} (Lu et al.): visit counts per state.
+    \item \textbf{Successor feature vector} (this work): $\gamma$-discounted state occupancy, with $\gamma = 0.99$.
+\end{itemize}
+
+\textbf{Step 4: Train three inference networks.} One feedforward network is trained per encoding. Each network has two ReLU hidden layers of width $64$. A softmax output layer with dimensionality equal to the number of objectives is used. Thus, the network's output always represents a valid preference. Training minimizes MSE against the ground-truth weight labels using Adam at learning rate $10^{-3}$ for $200$ epochs.
+
+\textbf{Step 5: Inference and policy selection.} At test time the demonstrator's trajectory is encoded the same three ways, and each encoded vector is passed through its corresponding network to produce an inferred weight. The demonstrator is then assigned the CCS policy $\pi^*_k$ whose region $R_k$ contains the inferred preference weight.
+
+\newpage
+\section{BIPI Methodology}
+
+% some of these definitions could probably be written more concisely in the below definition table
+
+\begin{definition}[Multi-Objective MDP]
+A multi-objective MDP is a tuple $\langle \mathcal{S}, \mathcal{A}, \mathcal{P}, \bm{\mathcal{R}}, \gamma \rangle$ where $\mathcal{S}$ is the state space, $\mathcal{A}$ is the action space, $\mathcal{P}: \mathcal{S} \times \mathcal{A} \times \mathcal{S} \to [0,1]$ is the transition function, $\bm{\mathcal{R}}: \mathcal{S} \times \mathcal{A} \to \mathbb{R}^d$ is the vector-valued reward function, and $\gamma \in [0,1]$ is the discount factor.
+\end{definition}
+
+\begin{definition}[Vector-Valued Q-Function]
+For a policy $\pi$, the vector-valued Q-function $Q^{\pi}(s, a)$ returns the expected future returns associated with a given state-action pair. Since this is a multi-objective setting, these Q functions return a vector where each entry corresponds to a given objective. 
+\end{definition}
+
+\begin{definition}[Utility]
+The utility of taking action $a$ in state $s$ under policy $\pi$ and preference weight $\mathbf{w}$ is the scalarization of the vector-valued Q-function.
+
+\begin{equation}
+    u_{\mathbf{w}}^{\pi}(s, a) = \mathbf{w}^\top Q^{\pi}(s, a)
+\end{equation}
+\end{definition}
+
+% does this get used anywhere in our algorithm?
+\begin{definition}[Return Vector]
+The expected final return of policy $\pi$ beginning from the initial state distribution is:
+\begin{equation}
+    J^{\pi} = \mathbb{E}_{\pi}\!\left[\sum_{t=0}^{\infty} \gamma^t \, \mathbf{r}(s_t, a_t)\right]
+\end{equation}
+\end{definition}
+
+Additional notation used throughout:
+
+\begin{center}
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{cl}
+    \hline
+    \textbf{Symbol} & \textbf{Definition} \\
+    \hline
+    $CCS = \{\pi^*_1, \ldots, \pi^*_K\}$ & CCS set of Pareto optimal policies \\
+    $\Pi = \{\pi_1, \ldots, \pi_K\}$ & Set of softmax reference policies \\
+    % this could be one trajectory, multiple trajectories or just smaller sequences as actions it doesn't really matter
+    $\tau = \{(s_1, a_1), \ldots, (s_T, a_T)\}$ & Demonstration data from a single demonstrator \\
+    $\mathbf{w}_h$ & Demonstrator's unknown true preference weight \\
+    $\beta_{\text{ref}}$ & Boltzmann rationality coefficient used in the softmax reference policies \\
+    $\beta_{\text{demo}}$ & Boltzmann rationality coefficient of the demonstrator \\
+    $\rho = \beta_{\text{demo}} / \beta_{\text{ref}}$ & Rationality ratio \\
+    $R_k \subseteq \Delta^{d-1}$ & Optimality region of policy $\pi_k$ on the weight simplex \\
+    $V_k = \Vol(R_k)$ & Volume of region $R_k$ on the simplex \\
+    $\mathbf{c}_k$ & Centroid of region $R_k$ \\
+    \hline
+\end{tabular}
+\end{center}
+
+\subsection*{Assumptions}
+
+\begin{assumption}[Boltzmann-Rational Demonstrator]
+\label{a:boltz}
+The demonstrator selects actions according to a Boltzmann (softmax) distribution over scalarized Q-values:
+\begin{equation}
+    P_{\text{demo}}(a \mid s, \mathbf{w}_h) = \frac{\exp\!\big(\beta_{\text{demo}} \cdot \mathbf{w}_h^\top Q^{\pi^*_{\mathbf{w}_h}}(s, a)\big)}{\displaystyle\sum_{a' \in \mathcal{A}(s)} \exp\!\big(\beta_{\text{demo}} \cdot \mathbf{w}_h^\top Q^{\pi^*_{\mathbf{w}_h}}(s, a')\big)}
+\end{equation}
+where $\pi^*_{\mathbf{w}_h}$ is the Pareto optimal policy corresponding to $\mathbf{w}_h$ and $\beta_{\text{demo}}$ is a known quantity that determines the rationality of the demonstrator.
+\end{assumption}
+\begin{assumption}[Softmax Reference Policies]
+\begin{equation}
+\label{eq:softmax_policy}
+    \pi_k(a \mid s) = \frac{\exp\!\big(\beta_{\text{ref}} \cdot \mathbf{w}_k^\top Q^{\pi_k}(s, a)\big)}{\displaystyle\sum_{a' \in \mathcal{A}(s)} \exp\!\big(\beta_{\text{ref}} \cdot \mathbf{w}_k^\top Q^{\pi_k}(s, a')\big)}
+\end{equation}
+We require $\beta_{\text{ref}}<\infty$. This causes $\pi_k(a \mid s) > 0$ for all $s, a$. Reference policies always assign non-zero probability to every action. This is necessary for BIPI.
+\end{assumption}
+
+
+\subsection*{Key Identity: Expressing Demonstrator Likelihood In Terms of Reference Policies}
+
+Start with the rationality assumption for reference policies (Assumption 2), each corresponding to a region's centroid preference vector $c_k$:
+\begin{equation*}
+\label{eq:softmax_policy}
+    \pi_k(a \mid s) = \frac{\exp\!\big(\beta_{\text{ref}} \cdot c_k^\top Q^{\pi_k}(s, a)\big)}{\displaystyle\sum_{a' \in \mathcal{A}(s)} \exp\!\big(\beta_{\text{ref}} \cdot c_k^\top Q^{\pi_k}(s, a')\big)}
+\end{equation*}
+
+
+Taking the logarithm of Assumption~2 and solving for the scalarized Q-value:
+\begin{equation}
+    \mathbf{c}_k^\top Q_k(s, a) = \frac{\log \pi_k(a \mid s) + \log Z_k(s)}{\beta_{\text{ref}}}
+\end{equation}
+where $Z_k(s) = \sum_{a'} \exp\!\big(\beta_{\text{ref}} \cdot \mathbf{c}_k^\top Q_k(s, a')\big)$ is the partition function. Taking the difference between two actions $a$ and $a'$, the partition function cancels:
+\begin{equation}
+    \mathbf{c}_k^\top Q_k(s, a) - \mathbf{c}_k^\top Q_k(s, a') = \frac{1}{\beta_{\text{ref}}} \log \frac{\pi_k(a \mid s)}{\pi_k(a' \mid s)}
+\end{equation}
+Utility differences between actions are therefore recoverable from stored policy probabilities alone, with no need to reference Q-vectors.
+
+The Boltzmann-rational likelihood of observing $a_t$ in state $s_t$ under region $R_k$ (Assumption~1) is proportional to $\exp\!\big(\beta_{\text{demo}} \cdot \mathbf{c}_k^\top Q_k(s_t, a_t)\big)$. Substituting the expression for $\mathbf{c}_k^\top Q_k$ above:
+\begin{equation}
+    P_{\text{demo}}(a_t \mid s_t, R_k) \propto \exp\!\big(\rho \log \pi_k(a_t \mid s_t) + \rho \log Z_k(s_t)\big) = \pi_k(a_t \mid s_t)^{\rho} \cdot Z_k(s_t)^{\rho}
+\end{equation}
+Since $Z_k(s_t)^{\rho}$ is constant across actions it cancels under normalization, giving:
+\begin{equation}
+    P_{\text{demo}}(a_t \mid s_t, R_k) = \frac{\pi_k(a_t \mid s_t)^{\rho}}{\displaystyle\sum_{a' \in \mathcal{A}(s_t)} \pi_k(a' \mid s_t)^{\rho}}
+\end{equation}
+
+
+\subsection{Precomputation}
+
+Before running BIPI, we precompute the CCS, associated set of softmax reference policies, and a few attributes describing the CCS.
+
+\textbf{Step 1: Compute the CCS.} This could be done in many ways. We use linear support \cite{felten2023} as the outer loop with tabular multi-objective Q-learning as the inner solver. Linear support iteratively queries weight vectors $\mathbf{w}$. For each query we train a Q-table via Q-learning scalarized by $\mathbf{w}$. We extract the optimal policy $\pi^*_k$ and its return vector $J^{\pi^*_k}$, and feed both back to the outer loop. The procedure terminates with a CCS of Pareto-optimal policies $\{\pi^*_1, \ldots, \pi^*_K\}$ and a table of Q values.
+
+\textbf{Step 2: Calculate corner weights.} For each pair of adjacent CCS policies, the corner weight where one becomes preferred over the other is found by setting their scalarized returns equal and solving for $\mathbf{w}$. These corner weights partition the simplex into $K$ regions $R_1, \ldots, R_K$, where $R_k$ contains the weights under which $\pi^*_k$ is optimal.
+
+\textbf{Step 3: Calculate centroids and volumes.} The volume $V_k$ of region $R_k$ is calculated using the corner weights. The centroid $\mathbf{c}_k$ of each region is the average of the region's corner weights.
+
+\textbf{Step 4: Calculate softmax reference policies.} For each centroid weight, use the Q-table to calculate a Boltzmann rational ($\beta_{\text{ref}}$) policy. All reference policies have a rationality of $\beta_{\text{ref}}$.
+
+For each region we save $\pi^*_k$, the corner weights of $R_k$, the volume $V_k$, the centroid $\mathbf{c}_k$, the softmax reference policy $\pi_k$, and the return vector $J^{\pi^*_k}$. The Q-tables themselves are discarded.
+
+\subsection{BIPI Algorithm}
+
+\begin{algorithm}[H]
+% other potential name: Multiobjective Baysesian Preference Inference from Demonstration (MOBPID)
+\caption{Bayesian Inverse Preference Inference}
+\label{alg:bmopid}
+\begin{algorithmic}[1]
+\Require Demonstration $\tau = \{(s_1, a_1), \ldots, (s_T, a_T)\}$
+\Require The set of corner weights for each region $R_k$ in the CCS % I dont know what to represent this as mathamatically
+\Require The volume $V_k$ and centroid preference vector $c_k$ for each region in the CCS
+\Require Set of softmax reference policies $\Pi = \{\pi_1, \ldots, \pi_K\}$, each corresponding to a given centroid weight $c_k$. All use the same rationality coefficient $\beta_{\text{ref}}$.
+
+\Statex
+\Statex \textbf{Initialize prior over regions proportional to region volume}
+\State $P(R_k|\tau) \gets V_k \,/\, \sum_{j} V_j$ \quad for $k = 1, \ldots, K$
+    \Comment{larger regions get more prior mass}
+
+\Statex
+\Statex \textbf{Sequential Bayesian update}
+\For{each $(s_t, a_t) \in \tau$}
+    \For{$k = 1, \ldots, K$}
+        \State Compute likelihood of $a_t$ under region $R_k$:
+        \begin{equation*}
+            P_{\text{demo}}(a_t \mid s_t, R_k) = \frac{\pi_k(a_t \mid s_t)^{\rho}}{\sum_{a' \in \mathcal{A}(s_t)} \pi_k(a' \mid s_t)^{\rho}}
+        \end{equation*}
+        \State $P(R_k) \gets P_{\text{demo}}(a_t \mid s_t, R_k) \cdot P(R_k)$
+            \Comment{multiply current probability by likelihood}
+    \EndFor
+    \State $P(R_k) \gets P(R_k) \,/\, \sum_{j=1}^{K} P(R_j)$ \quad for $k = 1, \ldots, K$
+        \Comment{normalize so distribution sums to 1}
+\EndFor
+
+\end{algorithmic}
+\end{algorithm}
+
+\subsection{Policy Selection Methods}
+We use four different methods to select a policy from the CCS, based on the posterior returned by BIPI.
+
+% \textbf{Require:} CCS set of parto optimal policies $CCS = \{\pi^*_1, \ldots, \pi^*_K\}$\\
+% \textbf{Require:} Posterior over CCS regions returned by BIPI $P(R_k \mid \tau) \forall k\in K$
+
+\subsubsection{MAP Policy}
+ 
+The simplest approach, assigning the policy that corresponds to the highest-probability region.
+\begin{equation}
+    \pi_{\text{MAP}} = \pi^*_{\hat{k}}, \quad \hat{k} = \argmax_k P(R_k \mid \tau)
+\end{equation}
+
+\subsubsection{Mean Preference Policy}
+
+Assign the policy whose region contains the posterior-weighted average of region centroids:
+\begin{equation}
+    \mathbf{w}_{\text{mean}} = \sum_{k=1}^{K} P(R_k \mid \tau) \cdot \mathbf{c}_k
+\end{equation}
+The selected policy is:
+\begin{equation}
+    \pi_{\text{mean}} = \pi^*_{\hat{k}}, \quad \mathbf{w}_{\text{mean}} \in R_{\hat{k}}
+\end{equation}
+ 
+\subsubsection{Maximum Expected Utility Policy}
+ 
+Assign the policy that maximizes expected utility under the full posterior. For each candidate policy $\pi^*_k$, its expected utility across the posterior is:
+\begin{equation}
+    EU(\pi^*_k) = \sum_{j=1}^{K} P(R_j \mid \tau) \cdot \mathbf{c}_j^\top J^{\pi^*_k}
+\end{equation}
+The selected policy is:
+\begin{equation}
+    \pi_{\text{EU}} = \argmax_{\pi^*_k \in CCS} EU(\pi^*_k)
+\end{equation}
+ 
+\subsubsection{Risk-Sensitive Policy (CVaR)}
+
+For each candidate policy $\pi^*_k$ in the CCS, order the regions by ascending utility $\mathbf{c}_j^\top J^{\pi^*_k}$ and let $\mathcal{T}_k(\alpha)$ denote the bottom $\alpha$ fraction of posterior mass along that ordering. The CVaR score of $\pi^*_k$ is the average utility over that tail:
+\begin{equation}
+    \CVaR_{\alpha}(\pi^*_k) = \frac{1}{\alpha} \sum_{j \in \mathcal{T}_k(\alpha)} P(R_j \mid \tau) \cdot \mathbf{c}_j^\top J^{\pi^*_k}
+\end{equation}
+The selected policy is:
+\begin{equation}
+    \pi_{\text{CVaR}} = \argmax_{\pi^*_k \in CCS} \CVaR_{\alpha}(\pi^*_k)
+\end{equation}
+We use $\alpha = 0.05$, focusing on the worst $5\%$ of posterior outcomes for each candidate. 
+
+
+
+
+\section{Experiments}
+
+All experiments are conducted with $\beta_{\text{ref}}=\beta_{\text{demo}}=20$. Each CCS is built using tabular MO Q-learning with $150{,}000$ episodes per weight on Deep Sea Treasure and $40{,}000$ on Fishwood. DWPI's three inference networks are each trained on $5{,}050$ examples generated at $101$ discretized weights. Each example is the average encoding of $100$ Boltzmann-rational demonstrations rolled out at that weight.
+
+\subsection*{Environments}
+
+\noindent
+\begin{minipage}[c]{0.3\textwidth}
+    \centering
+    \includegraphics[width=\linewidth]{figures/deepSeaPic.png}
+\end{minipage}%
+\hfill
+\begin{minipage}[c]{0.66\textwidth}
+    \textbf{Deep Sea Treasure (deep-sea-treasure-v0).} A submarine navigates a deterministic $11 \times 11$ grid world, starting at $(0, 0)$. The action space is discrete with four moves (up, down, left, right). The reward is two-dimensional: a time penalty of $-1$ per step plus the value of the treasure at the agent's current cell, non-zero only on treasure cells. The episode terminates when a treasure is reached. We validate the CCS with the precomputed Pareto front shipped with the environment.
+\end{minipage}
+
+\vspace{1em}
+
+\noindent
+\begin{minipage}[c]{0.3\textwidth}
+    \centering
+    \includegraphics[width=\linewidth]{figures/fishwoodPic.png}
+\end{minipage}%
+\hfill
+\begin{minipage}[c]{0.66\textwidth}
+    \textbf{Fishwood (fishwood-v0).} An agent alternates between two states, ``fishing'' or ``in the woods", and at each step chooses one of two actions: go fishing or go collect wood. The reward is two-dimensional: $+1$ for collecting wood when in the woods (with probability \texttt{woodproba}) and $+1$ for catching a fish when fishing (with probability \texttt{fishproba}). The agent starts in the woods and the episode ends after 200 steps. The stochastic collection probabilities make this a fully stochastic environment.
+\end{minipage}
+
+% resource gathering is being skipped for now
+
+% \vspace{1em}
+
+% \noindent
+% \begin{minipage}[c]{0.3\textwidth}
+%     \centering
+%     \includegraphics[width=\linewidth]{figures/resourcePic.png}
+% \end{minipage}%
+% \hfill
+% \begin{minipage}[c]{0.66\textwidth}
+%     \textbf{Resource Gathering (resource-gathering-v0).} An agent navigates a $5 \times 5$ grid world containing gold, a diamond, and stochastic enemies. The state is four-dimensional: the agent's $(x, y)$ position together with binary flags for whether gold and diamond have been picked up. There are four movement actions. Reward is three-dimensional: a $-1$ penalty if killed by an enemy, and $+1$ each for gold and diamond, the latter two awarded only upon returning home. The episode terminates when the agent returns home or is killed.
+% \end{minipage}
+
+\subsection*{Generating a Test Set of Demonstrations}
+
+Our testing set consists of 5000 simulated users, each generating one trajectory used as input to both BIPI and DWPI. For each user we randomly select one of DWPI's 101 discretized weights, and roll out a single trajectory using a Boltzmann-rational policy over the DWMOTQ Q-table at that weight with $\beta_{\text{demo}}=20$. Note that this is the same Q-table used to generate training demos in DWPI.
+    
+
+\section{Results}
+
+% results table for Deep Sea Treature
+
+\begin{table}[h!]
+    \centering
+    \caption{Results on Deep Sea Treasure}
+    \begin{tabular}{|c|c|c|}
+        \hline
+        \textbf{Method} & \textbf{Accuracy} & \textbf{Mean Utility Gap} \\
+        \hline
+        BIPI-MAP & 77.5\% & -0.6793 \\
+        \hline
+        BIPI-Mean & 77.4\% & -0.6691 \\
+        \hline
+        BIPI-EU & 77.4\% & -0.6691 \\
+        \hline
+        BIPI-CVaR(5\%) & 52.9\% & -1.5892 \\
+        \hline
+        DWPI-Return & 78.2\% & -0.2014 \\
+        \hline
+        DWPI-StateFreq & 67.0\% & -1.2548 \\
+        \hline
+        DWPI-SuccessorFeat & 69.7\% & -0.4455 \\
+        \hline
+    \end{tabular}
+\end{table}
+
+With the exception of CVaR policy selection, all BIPI-based approaches are competitive on deep-sea-treasure-v0. They outperform state frequency and successor feature-based DWPI but narrowly fall short of return-based DWPI.
+\newpage
+\begin{table}[h!]
+    \centering
+    \caption{Results on Fishwood}
+    \begin{tabular}{|c|c|c|}
+        \hline
+        \textbf{Method} & \textbf{Accuracy} & \textbf{Mean Utility Gap} \\
+        \hline
+        BIPI-MAP & 97.7\% & -0.0291 \\
+        \hline
+        BIPI-Mean & 97.7\% & -0.0291 \\
+        \hline
+        BIPI-EU & 97.7\% & -0.0291 \\
+        \hline
+        BIPI-CVaR(5\%) & 97.7\% & -0.0291 \\
+        \hline
+        DWPI-Return & 97.7\% & -0.0291 \\
+        \hline
+        DWPI-StateFreq & 97.3\% & -0.0385 \\
+        \hline
+        DWPI-SuccessorFeat & 97.8\% & -0.0193 \\
+        \hline
+    \end{tabular}
+\end{table}
+
+On the simple but highly stochastic fishwood-v0 environment all approaches perform similarly well achieving high accuracy and low mean utility gap. DWPI based on successor features narrowly performs the best while DWPI based on state frequencies performs the worst by a tiny margin. All other approaches perform the same.
+
+% \begin{table}[h!]
+%     \centering
+%     \caption{Results on Resource Gathering}
+%     \begin{tabular}{|c|c|c|}
+%         \hline
+%         \textbf{Method} & \textbf{Accuracy} & \textbf{Mean Utility Gap} \\
+%         \hline
+%         BIPI-MAP & - & - \\
+%         \hline
+%         BIPI-Mean & - & - \\
+%         \hline
+%         BIPI-EU & - & - \\
+%         \hline
+%         BIPI-CVaR(5\%) & - & - \\
+%         \hline
+%         DWPI-Return & - & - \\
+%         \hline
+%         DWPI-StateFreq & - & - \\
+%         \hline
+%         DWPI-SuccessorFeat & - & - \\
+%         \hline
+%     \end{tabular}
+% \end{table}
+
+\section{Discussion}
+
+\subsection*{Interpretation of Results}
+
+Two parts of our experimental setup grant a substantial advantage to DWPI. First, every simulated test user's true preference is drawn from the same 101-weight discretization that DWPI's inference networks are trained against, so test preferences land exactly on training-time anchor points. BIPI receives no such alignment between its reference set and the test distribution. Second, test demonstrations are rolled out from the very Q-tables DWPI used to generate its training data, so the input distribution DWPI sees at test time is nearly identical to the one it saw during training. Despite these advantages, the state-frequency and successor-feature DWPI variants still fall behind BIPI on Deep Sea Treasure, suggesting that the encoding step itself is a bottleneck on accuracy.
+
+We suspect BIPI's failure to achieve the best performance on either environment reflects a resolution problem rather than an information-content problem. Per-step action data is in principle higher-fidelity than any trajectory encoding. In stochastic environments, very different policies can produce similar return vectors, and the per-step view retains the policy structure that encodings like returns wash out. However, BIPI compares the demonstrator's actions against only one reference policy per CCS region (the softmax policy at the centroid), while DWPI compares the demonstrator's encoded trajectory against thousands of training-time anchors spread across the simplex. BIPI's per-step view is high-fidelity in what it observes and low-resolution in what it compares against. DWPI's encoded view is the inverse.
+
+\textbf{Hypothesis 1} (BIPI outperforms DWPI across environments) is not supported. BIPI is competitive on Deep Sea Treasure but loses narrowly to DWPI-Return, and on Fishwood all methods except DWPI-StateFreq are effectively tied. The structural advantages given to DWPI in our setup likely contribute, but the result as measured does not clear the bar.
+
+\textbf{Hypothesis 2} (BIPI's edge over DWPI grows in stochastic environments) is not testable from these results. Fishwood is sufficiently simple that all methods saturate near 97.7\% accuracy, leaving little margin to compare across. Resolving this hypothesis requires a stochastic environment with enough behavioral complexity for methods to meaningfully differ.
+
+\textbf{Hypothesis 3} (DWPI with successor features outperforms return and state-frequency encodings across environments) is mixed. Successor features beat state frequencies on Deep Sea Treasure but lose to returns there. On Fishwood successor features are narrowly best, but the margin is so small as to not be meaningful.
+
+\subsection*{Limitations}
+
+BIPI requires precomputing a CCS, which scales exponentially with the number of objectives. BIPI's reference set is also small, with one softmax policy per CCS region, so resolution within the simplex is bounded by the number of regions. Finally, we assume that the centroid preference is representative of its whole region. This is not necessarily true. Two preference weights belonging to the same region could generate remarkably different softmax policies. Thus, if a demonstrator's true preference sits near the edge of a region, comparing their behavior to a centroid softmax policy may result in inaccurate inference. Our study itself is limited in that we only explore performance across two very simple multi-objective environments.
+
+\subsection*{Future Work}
+
+The most immediate next step would be to replace BIPI's centroid-anchored reference policy with a region-adaptive one. Given a stored softmax policy at the centroid, the softmax policy for any other weight in the same region should be recoverable without any retraining. Action probabilities depend on utility, and utility is linearly related to preference weight. Thus, I believe the probabilities under the centroid policy already encode the likelihood at a different weight belonging to the same region. We could perform gradient descent or some form of Bayesian inference to find the preference most likely to have produced the observed demo in a given region. Alternatively, we could address BIPI's "resolution" issue by calculating many more reference policies throughout the preference space.
+
+Another logical next step would be to evaluate on resource-gathering-v0 to test the methods at higher difficulty (three objectives, stochastic enemies). Furthermore, we could attempt to extend BIPI to continuous action spaces and benchmark on multi-objective MuJoCo. We could also attempt to improve DWPI by replacing its crude encodings with a learned trajectory embedding that preserves preference-relevant structure.
+
+BIPI's framework of action-by-action Bayesian inference might also be useful for detecting if we have a misspecified hypothesis space, possibly due to a missing objective/hidden context \cite{siththaranjan2024} or a non-linear combination of objectives \cite{bobu2018}. Lastly, we could examine if BIPI is more robust to misspecification of $\beta_{\text{demo}}$ than DWPI is.
+
+
+
+\section*{Contributions}
+Mason duBoef is the only member of this group and contributed all work.\\
+Prof. Bruno Castro da Silva provided insight and feedback throughout this project. He aided in formulating BIPI's key identity, directed me toward MORL resources, and contributed ideas for future work.\\ \\
+Code and models used can be viewed on my GitHub (https://github.com/mduboef/bipi).
+\newpage
+\section*{References}
+\begingroup
+\renewcommand{\section}[2]{}
+\small
+\begin{thebibliography}{9}
+\setlength{\itemsep}{0pt}
+\setlength{\parskip}{0pt}
+\bibitem{ikenaga2018} Ikenaga, A. and Arai, S. ``Inverse RL approach for elicitation of preferences in multi-objective sequential optimization.'' \emph{IEEE ICA}, 2018.
+\bibitem{takayama2022} Takayama, N. and Arai, S. ``Multi-objective deep inverse RL for weight estimation of objectives.'' \emph{Artificial Life and Robotics}, 2022.
+\bibitem{lu2023} Lu, J., Mannion, P., and Mason, K. ``Inferring preferences from demonstrations in multi-objective RL.'' \emph{Neural Computing and Applications}, 2024.
+\bibitem{felten2023} Felten, F., Alegre, L. N., Now\'e, A., Bazzan, A., Talbi, E. G., Danoy, G., and da Silva, B. C. ``A toolkit for reliable benchmarking and research in multi-objective reinforcement learning.'' \emph{NeurIPS}, 2023.
+\bibitem{bobu2018} Bobu, A., Bajcsy, A., Fisac, J. F., and Dragan, A. D. ``Learning under misspecified objective spaces.'' \emph{CoRL}, 2018.
+\bibitem{siththaranjan2024} Siththaranjan, A., Laidlaw, C., and Hadfield-Menell, D. ``Distributional preference learning: Understanding and accounting for hidden context in RLHF.'' \emph{ICLR}, 2024.
+\end{thebibliography}
+\endgroup
+
+\newpage \newpage 
+
+
+
+
+
+
+\end{document}
