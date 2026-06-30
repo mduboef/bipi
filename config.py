@@ -1,7 +1,7 @@
 # episodes used for CCS Q-learning (buildCCS + trainSoftmaxPolicies) per environment
 # add an entry here before running any mode on a new environment
 CCS_EPISODES = {
-	"deep-sea-treasure-v0": 150000,
+	"deep-sea-treasure-v0": 70000,
 	"fishwood-v0":          40000,
 }
 
