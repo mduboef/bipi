@@ -51,12 +51,34 @@ from algs.dwpi import (ENCODINGS, getWeightVecs,
 from compare import runCompare
 
 
+# testGen.py
+	# randomly select NUM_USERS preference weights
+	# train a RL policy specific to each users exact weight
+	# for each user generate TRAJ_PER_USER demos
+	# no training/testing split, all this is test set data
+	# save all these demos to disk with their associated label (pref weight)
+
+# main.py
+	# read all testing data from the disk after running testGen.py
+	# run all methods on the testing data saved to disk: bipi & different versions of dwpi
+	# select a single inferred preference weight for each method
+	# 	for dwpi methods this is just the output of the network
+	# 	for bipi this means using different approaches to select a single discrete w given the bipi posterior
+	# select policy from ccs to corresponds to inferred preference
+	# compare results
+	# 	in terms of expected reward for selected CCS policy under ground truth preference (label)
+	# 		how much worse was selected CCS policy than the best/optimal one?
+	# 	in terms of pref inference accuracy & distance
+	# 		how close were they to the correct w?
+	# 		how often did they select the best/optimal ccs policy?
+
 
 
 def main():
 
 	# stores names of environments to run experiments on
 	# TODO adapt existing code to work with resource-gathering-v0 environment
+		# requires changing code to work with 3+ objectives
 	envNames = ["deep-sea-treasure-v0", "fishwood-v0", "resource-gathering-v0"]
 	methodNames = ["ccs", "bipi", "dwpi", "compare"]
 
@@ -83,11 +105,16 @@ def main():
 	# flag will graphically render synthetic demos and rollout of CCS policy that would be best for user
 	renderBool = ("-render" in sys.argv)
 	
-
+	# create env object
 	env = makeEnv(envName)
 	printEnvInfo(env, envName)
 
+	# number of objectives is the dimensionality of the vector reward
+	numObjectives = env.unwrapped.reward_space.shape[0]
 
+
+
+	# CCS METHOD:	calulate ccs policies (no inference)
 	if methodName == "ccs":
 		saveDir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'ccsResults', envName)
 		ccsPath = os.path.join(saveDir, 'ccs.pkl')
@@ -104,7 +131,7 @@ def main():
 		softmaxPolicies = trainSoftmaxPolicies(env, ccs, POLICY_BETA, nEpisodes=nEpisodes, gamma=ccsGamma)
 		saveSoftmaxPolicies(softmaxPolicies, saveDir)
 
-
+	# BIPI METHOD:	use new bayesean inference approach on saved demo data
 	elif methodName == "bipi":
 		ccsDir  = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'ccsResults', envName)
 		saveDir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'dwpiResults', envName)
@@ -164,6 +191,7 @@ def main():
 		printBIPIAccuracy(bipiResults)
 
 
+	# DWPI METHOD:	use new baseline inference approach on saved demo data
 	elif methodName == "dwpi":
 		ccsDir  = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'ccsResults', envName)
 		saveDir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'dwpiResults', envName)
@@ -173,7 +201,7 @@ def main():
 		stateSize = getStateSize(env)
 		weightVecs = getWeightVecs(DWPI_GRANULARITY)
 
-		# phase 1: DWMOTQ — train or load one Q-table per discretized weight
+		# phase 1: DWMOTQ, train or load one Q-table per discretized weight
 		dwmotqPath = os.path.join(saveDir, 'dwmotq.pkl')
 		if os.path.exists(dwmotqPath):
 			print("Loading DWMOTQ agent ...")
@@ -183,7 +211,7 @@ def main():
 			qTables = trainDWMOTQ(env, DWPI_GRANULARITY, DWPI_N_EPISODES)
 			saveDWMOTQ(qTables, saveDir)
 
-		# phase 2: synthetic training dataset — build or load
+		# phase 2: synthetic training dataset, build or load
 		datasetPath = os.path.join(saveDir, 'dataset.pkl')
 		if os.path.exists(datasetPath):
 			print("Loading dataset ...")
@@ -244,6 +272,9 @@ def main():
 
 		printDWPIResults(userResults, regions)
 
+
+
+	# COMPARE METHOD: lunches comapritive analysis of bipi and dwpi, using saved dwpi model and ccs policies on disk
 	elif methodName == "compare":
 		ccsDir  = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'ccsResults', envName)
 		saveDir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'dwpiResults', envName)
