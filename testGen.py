@@ -1,8 +1,8 @@
 
-import os, sys
+import os, sys, pickle
 import numpy as np
 from collections import defaultdict
-from helpers import makeEnv, printEnvInfo, runEpisode
+from helpers import makeEnv, printEnvInfo, runEpisode, renderTrajectory
 from algs.dwpi import makeBoltzmannDemoPolicy, _softV
 from config import (TRAJ_PER_USER, NUM_USERS, POLICY_BETA, DEMO_BETA,
 	CCS_EPISODES, CCS_GAMMA)
@@ -19,6 +19,7 @@ def trainQTable(env, w, nEpisodes, gamma, alpha=0.2):
 	qTable = defaultdict(lambda: np.zeros(nActions))
 	epsStart, epsEnd = 0.8, 1e-4
 
+	# training loop runs for specified num of episodes
 	for ep in range(nEpisodes):
 		eps = max(epsStart * (1.0 - ep / nEpisodes), epsEnd)
 		obs, _ = env.reset()
@@ -44,17 +45,26 @@ def trainQTable(env, w, nEpisodes, gamma, alpha=0.2):
 
 
 # saves demo/rollouts to disk with their associated w
-def saveTestData(env, testWs, testPolicies, testDemos):
+# overwrites the file each call so partial progress is preserved if training is interrupted
+def saveTestData(env, envName, testWs, testPolicies, testDemos):
+	dataDir = os.path.join(os.path.dirname(__file__), "testingData")
+	os.makedirs(dataDir, exist_ok=True)
+	outPath = os.path.join(dataDir, f"{envName}_testData.pkl")
 
-	for userID in range(len(testWs)):
-		# add an entry to the test data file for this user
-			# includes w, beta and (state, action) data for all the user's rollouts/demos
+	data = {
+		'envName': envName,
+		'demoBeta': DEMO_BETA,
+		'ws': testWs,
+		'demos': testDemos,
+	}
 
-		# OPTIONAL: save policy file
-	return
+	with open(outPath, 'wb') as f:
+		pickle.dump(data, f)
+
+	print(f"\tSaved {len(testDemos[0])*len(testWs)} demos from {len(testWs)} synthetic demonstrators to {outPath}")
 
 # trains synthetic demostrator policies with random ws
-# saves the w, trained, policy and rollouts to disk
+# saves the w, rollouts and policy to disk
 def testSetGen():
 	
 	# usage: python3 testSetGen.py <envName>
@@ -70,40 +80,53 @@ def testSetGen():
 	testWs = []
 	testPolicies = []
 	testDemos = []
+
 	# randomly select NUM_USERS preference weights
+	# TODO parallelize this so we are training multiple "users"/demonstrators at a time
 	for i in range(NUM_USERS):
 
-		
 		# generate the randomized pref vector
 		rng = np.random.default_rng()
-		w = rng.dirichlet(np.ones(numObjectives-1))	# vec length is numObjectives-1
+		w = rng.dirichlet(np.ones(numObjectives))
 
 		testWs.append(w)
 
+		print(f"Training Demonstrator {i+1}...")
+		print(f"\tw = {w}")		# TODO print this in a more organized and presentable way
+
 		# train a RL policy specific to the exact preference weight
-		qTable = trainQTable(env, w, CCS_EPISODES[envName], CCS_GAMMA[envName])
+		# ? should I train till convergence instead of a fixed num of eps
+		qTable = trainQTable(env, w, CCS_EPISODES[envName], CCS_GAMMA[envName])		# NOTE demonstrators trained with same # of episodes as used to train CCS policies, is there a more principled stopping criteria
+		policy = makeBoltzmannDemoPolicy(qTable, DEMO_BETA)
 		testPolicies.append(policy)
 
 		# for each user generate TRAJ_PER_USER demos
 		userDemos = []
 		for j in range(TRAJ_PER_USER):
 
-			# create boltzman rationality (DEMO_BETA) policy from Q table
-			policy = makeBoltzmannDemoPolicy(qTable, DEMO_BETA)
-
 			# rolls out policy for one episode
 			# returns the trajectory: list of (obs, action, reward) tuples
-			demo, _ = runEpisode(env, demoPolicy)
+			demo, _ = runEpisode(env, policy)
 			userDemos.append(demo)
 
 		testDemos.append(userDemos)
 
 		# save all these demos to disk with their associated label (pref weight)
-		saveTestData(testWs, testDemos)
+		saveTestData(env, envName, testWs, testPolicies, testDemos)
+
+	# render trajectories if we have the -render flag
+	renderBool = ("-render" in sys.argv)
+	if renderBool:
+		for i in range(NUM_USERS):
+			print(f"Displaying demos by user {i}")
+			print(f"w = {testWs[i]}")		# TODO print this in a more organized and presentable way
+			for j in range(TRAJ_PER_USER):
+				print(f"\tTrajectory {j+1}/{TRAJ_PER_USER}...")
+				renderTrajectory(testDemos[i][j], testWs[i], envName, frameDelay=0.4)
 
 	return
 
-testSetGen():
+testSetGen()
 
 
 

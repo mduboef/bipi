@@ -110,12 +110,14 @@ def main():
 	printEnvInfo(env, envName)
 
 	# number of objectives is the dimensionality of the vector reward
+	# TODO update all functionality to work with variable number of objectives, numObjectives
 	numObjectives = env.unwrapped.reward_space.shape[0]
 
 
 
 	# CCS METHOD:	calulate ccs policies (no inference)
 	if methodName == "ccs":
+		# NOTE the deep-sea-treasure-v0 and resource-gathering-v0 envs come with a precomptued pareto front, fishwood-v0 doesn't
 		saveDir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'ccsResults', envName)
 		ccsPath = os.path.join(saveDir, 'ccs.pkl')
 		if os.path.exists(ccsPath):
@@ -130,6 +132,8 @@ def main():
 		print(f"Training softmax policies at region centroids (beta = {POLICY_BETA}, gamma = {ccsGamma}) ...")
 		softmaxPolicies = trainSoftmaxPolicies(env, ccs, POLICY_BETA, nEpisodes=nEpisodes, gamma=ccsGamma)
 		saveSoftmaxPolicies(softmaxPolicies, saveDir)
+
+		# TODO train softmax policies at 101 discrete and evenly spaced ws, using the same granularity as DWPI
 
 	# BIPI METHOD:	use new bayesean inference approach on saved demo data
 	elif methodName == "bipi":
@@ -199,22 +203,24 @@ def main():
 		regions = ccs['regions']
 		nObj      = len(regions[0]['returnVec'])
 		stateSize = getStateSize(env)
+
+		# step 1:	discretize the pref space, evently spaced
 		weightVecs = getWeightVecs(DWPI_GRANULARITY)
 
-		# phase 1: DWMOTQ, train or load one Q-table per discretized weight
+		# step 2:	train one Q-table per pref weight, w, using DWMOTQ (tabular Q learning)
 		dwmotqPath = os.path.join(saveDir, 'dwmotq.pkl')
-		if os.path.exists(dwmotqPath):
-			print("Loading DWMOTQ agent ...")
-			qTables = loadDWMOTQ(saveDir)
+		if os.path.exists(dwmotqPath):			# load the q tables from disk if they already exist
+			print("Loading Q tables that exist on disk in dwmotq.pkl...")
+			qTables = loadDWMOTQ(saveDir)		# NOTE delete dwmotq.pkl if you want new Q tables
 		else:
-			print(f"Training DWMOTQ ({len(weightVecs)} weights × {DWPI_N_EPISODES} episodes each) ...")
+			print(f"Training {len(weightVecs)} Q tables ({DWPI_N_EPISODES} episodes each) ...")
 			qTables = trainDWMOTQ(env, DWPI_GRANULARITY, DWPI_N_EPISODES)
 			saveDWMOTQ(qTables, saveDir)
 
-		# phase 2: synthetic training dataset, build or load
+		# step 3:	build set of training data, turning each Q-table into actual trajectories
 		datasetPath = os.path.join(saveDir, 'dataset.pkl')
-		if os.path.exists(datasetPath):
-			print("Loading dataset ...")
+		if os.path.exists(datasetPath):			# load the training data from disk if they already exist
+			print("Loading train data that exist on disk in dataset.pkl...")
 			Xret, Xfreq, Xsf, Y = loadDataset(saveDir)
 		else:
 			nExamples = len(weightVecs) * DWPI_AUGMENT
@@ -224,7 +230,7 @@ def main():
 				env, qTables, DWPI_GRANULARITY, DWPI_NDEMOS_TRAIN, DWPI_AUGMENT, DWPI_SF_GAMMA)
 			saveDataset((Xret, Xfreq, Xsf, Y), saveDir)
 
-		# phase 3: train or load one FNN per encoding
+		# step 4:	train or load one FNN per encoding
 		inputDims   = {'return': nObj, 'stateFreq': stateSize, 'sf': stateSize}
 		modelPaths  = {enc: os.path.join(saveDir, f'model_{enc}.pt') for enc in ENCODINGS}
 		XbyEnc      = {'return': Xret, 'stateFreq': Xfreq, 'sf': Xsf}
@@ -241,7 +247,7 @@ def main():
 					XbyEnc[enc], Y, nObj, DWPI_HIDDEN_DIM, DWPI_EPOCHS, DWPI_LR)
 			saveModels(models, saveDir)
 
-		# phase 4: evaluate on simulated users
+		# step 5:	evaluate on simulated users
 		# sample test weights from the discretized set (same distribution as training)
 		userResults = []
 		for user in range(NUM_USERS):
