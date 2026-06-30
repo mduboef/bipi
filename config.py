@@ -17,7 +17,7 @@ POLICY_BETA = 20.0
 DEMO_BETA = 20.0
 
 TRAJ_PER_USER = 100			# how many trajectories worth of demo data should each demonstrator generate
-NUM_USERS = 5000			# how many unique demonstrators/users should we simulate
+NUM_USERS = 1000			# how many unique demonstrators/users should we simulate
 
 # DWPI hyperparameters (Lu et al. 2024)
 DWPI_GRANULARITY  = 0.01	# simplex discretization granularity (g in paper; 101 weights for 2D)
