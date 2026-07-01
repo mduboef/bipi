@@ -41,7 +41,7 @@ from config import (CCS_EPISODES, CCS_GAMMA, POLICY_BETA, DEMO_BETA, TRAJ_PER_US
 	DWPI_SF_GAMMA, DWPI_HIDDEN_DIM, DWPI_EPOCHS, DWPI_LR, DWPI_NDEMOS_INFER)
 from helpers import (makeEnv, printEnvInfo, runEpisode, findRegion, renderTrajectory,
 	getStateSize, obsToStateIdx, loadTestData)
-from algs.ccs import buildCCS, printCCS, saveCCS, loadCCS, trainSoftmaxPolicies, saveSoftmaxPolicies, loadSoftmaxPolicies
+from algs.ccs import buildCCS, printCCS, saveCCS, loadCCS, trainSoftmaxPolicies, saveSoftmaxPolicies, loadSoftmaxPolicies, verifyRegionPolicies
 from algs.bipi import runBIPI, selectMapPolicy, selectMeanWeightPolicy, selectEUPolicy, selectCVaRPolicy, printBIPIResults, printBIPIAccuracy
 from algs.dwpi import (ENCODINGS, getWeightVecs,
 	trainDWMOTQ, saveDWMOTQ, loadDWMOTQ, lookupQTable,
@@ -133,6 +133,9 @@ def main():
 		print(f"Training softmax policies at region centroids (beta = {POLICY_BETA}, gamma = {ccsGamma}) ...")
 		softmaxPolicies = trainSoftmaxPolicies(env, ccs, POLICY_BETA, nEpisodes=nEpisodes, gamma=ccsGamma)
 		saveSoftmaxPolicies(softmaxPolicies, saveDir)
+
+		# BIPI depends on each region policy reaching its own treasure; warn loudly if any fall short
+		verifyRegionPolicies(env, ccs, softmaxPolicies)
 
 		# TODO train softmax policies at 101 discrete and evenly spaced ws, using the same granularity as DWPI
 

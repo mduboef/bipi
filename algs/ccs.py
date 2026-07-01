@@ -204,6 +204,30 @@ def trainSoftmaxPolicies(env, ccs, beta, nEpisodes=10000, alpha=0.1, gamma=1.0):
 	return softmaxPolicies
 
 
+# rolls out each region's greedy softmax policy and warns if it fails to reach its own returnVec
+# BIPI's likelihood assumes each region policy reaches that region's treasure; if a deep-treasure
+# policy is under-converged and stops short, BIPI cannot recognize demonstrators for that region
+def verifyRegionPolicies(env, ccs, softmaxPolicies, maxSteps=200, atol=0.05):
+	policies = {sp['regionIdx']: sp['policy'] for sp in softmaxPolicies}
+	print("  verifying region policies reach their own returnVec ...")
+	for k, region in enumerate(ccs):
+		policy = policies.get(k, {})
+		obs, _ = env.reset()
+		total = np.zeros(len(region['returnVec']))
+		done = False
+		steps = 0
+		while not done and steps < maxSteps:
+			s = tuple(obs)
+			a = int(np.argmax(policy[s])) if s in policy else env.action_space.sample()
+			obs, r, terminated, truncated, _ = env.step(a)
+			total += r
+			done = terminated or truncated
+			steps += 1
+		reached = abs(total[0] - region['returnVec'][0]) <= atol
+		flag = "" if reached else "  <-- WARNING: does not reach its own treasure"
+		print(f"    region {k}: expected {np.round(region['returnVec'], 2)}  reached {np.round(total, 2)}{flag}")
+
+
 # saves softmax policies to saveDir/softmaxPolicies.pkl
 def saveSoftmaxPolicies(softmaxPolicies, saveDir):
 	os.makedirs(saveDir, exist_ok=True)
