@@ -2,14 +2,12 @@ import os
 import sys
 import numpy as np
 
-from config import (POLICY_BETA, DEMO_BETA, NUM_USERS, TRAJ_PER_USER,
-	DWPI_GRANULARITY, DWPI_SF_GAMMA, DWPI_HIDDEN_DIM)
-from helpers import runEpisode, findRegion, getStateSize, obsToStateIdx
+from config import POLICY_BETA, DWPI_SF_GAMMA, DWPI_HIDDEN_DIM
+from helpers import findRegion, getStateSize, obsToStateIdx, loadTestData
 from algs.ccs import loadCCS, loadSoftmaxPolicies
 from algs.bipi import (runBIPI, selectMapPolicy, selectMeanWeightPolicy,
 	selectEUPolicy, selectCVaRPolicy)
-from algs.dwpi import (ENCODINGS, getWeightVecs, lookupQTable,
-	makeBoltzmannDemoPolicy, encodeDemos, loadDWMOTQ, loadModels, inferWeight)
+from algs.dwpi import ENCODINGS, encodeDemos, loadModels, inferWeight
 
 _COMPARE_METHODS = [
 	('bipi:MAP',        'bipi_map'),
@@ -32,14 +30,7 @@ def printCompareResults(results):
 		print(f"  {label:<18}  {nCorrect:>3}/{nUsers}  ({nCorrect/nUsers*100:>5.1f}%)  {meanGap:>+.4f}")
 
 
-def _evaluateUser(env, regions, qTables, models, weightVecs, stateSize, rho, user):
-	nObj       = len(regions[0]['returnVec'])
-	prefWeight = np.random.dirichlet(np.ones(nObj))
-
-	qTable     = lookupQTable(qTables, prefWeight, weightVecs)
-	demoPolicy = makeBoltzmannDemoPolicy(qTable, DEMO_BETA)
-	demos      = [runEpisode(env, demoPolicy)[0] for _ in range(TRAJ_PER_USER)]
-
+def _evaluateUser(env, regions, models, stateSize, rho, user, prefWeight, demos):
 	trueRegion    = findRegion(prefWeight, regions)
 	trueRegionIdx = next(i for i, r in enumerate(regions) if r is trueRegion)
 	optimalEU     = float(np.dot(prefWeight, regions[trueRegionIdx]['returnVec']))
@@ -73,7 +64,8 @@ def _evaluateUser(env, regions, qTables, models, weightVecs, stateSize, rho, use
 
 
 # loads all artifacts and runs the head-to-head comparison between BIPI and DWPI
-def runCompare(env, ccsDir, saveDir):
+# both methods are scored on the identical test demos saved to disk by testGen.py
+def runCompare(env, envName, ccsDir, saveDir):
 	ccs = loadCCS(ccsDir)
 	regions = ccs['regions']
 
@@ -83,26 +75,27 @@ def runCompare(env, ccsDir, saveDir):
 
 	nObj      = len(regions[0]['returnVec'])
 	stateSize = getStateSize(env)
-	weightVecs = getWeightVecs(DWPI_GRANULARITY)
-	rho          = DEMO_BETA / POLICY_BETA
 
-	dwmotqPath = os.path.join(saveDir, 'dwmotq.pkl')
 	modelPaths = {enc: os.path.join(saveDir, f'model_{enc}.pt') for enc in ENCODINGS}
-	missing = ([] if os.path.exists(dwmotqPath) else ['dwmotq.pkl']) + \
-	          [f'model_{enc}.pt' for enc, p in modelPaths.items() if not os.path.exists(p)]
+	missing = [f'model_{enc}.pt' for enc, p in modelPaths.items() if not os.path.exists(p)]
 	if missing:
-		print("Error: missing cached files — run 'dwpi' mode first to generate them:")
+		print("Error: missing cached DWPI models — run 'dwpi' mode first to generate them:")
 		for m in missing: print(f"  {m}")
 		sys.exit(1)
 
-	print("Loading DWMOTQ agent and inference models ...")
-	qTables = loadDWMOTQ(saveDir)
+	print("Loading DWPI inference models ...")
 	models  = loadModels({'return': nObj, 'stateFreq': stateSize, 'sf': stateSize},
 	                     nObj, DWPI_HIDDEN_DIM, saveDir)
 
+	# load the shared test set and score both methods on the same demonstrators
+	testData = loadTestData(envName)
+	testWs, testDemos = testData['ws'], testData['demos']
+	rho = testData['demoBeta'] / POLICY_BETA
+	print(f"Loaded {len(testWs)} test demonstrators from disk (demoBeta = {testData['demoBeta']})")
+
 	results = []
-	for user in range(NUM_USERS):
-		result = _evaluateUser(env, regions, qTables, models, weightVecs, stateSize, rho, user)
+	for user in range(len(testWs)):
+		result = _evaluateUser(env, regions, models, stateSize, rho, user, testWs[user], testDemos[user])
 		results.append(result)
 
 	printCompareResults(results)

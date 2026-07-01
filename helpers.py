@@ -1,3 +1,5 @@
+import os
+import pickle
 import time
 import gymnasium
 import mo_gymnasium as mo_gym
@@ -49,6 +51,21 @@ def printRegionsInfo(paretoFront):
 	for rv, wLeft, wRight in regions:
 		print(f"  {rv[0]:>10.1f}  {rv[1]:>8.2f}  {wLeft:>8.4f}  {wRight:>8.4f}  {wRight - wLeft:>8.4f}")
 	print()
+
+
+# loads the test demonstrator set written to disk by testGen.py
+# returns a dict with keys: envName, demoBeta, ws (list of true pref weights), demos (list of per-user trajectory lists)
+# each trajectory is a list of (obs, action, reward) tuples, the same format runBIPI and encodeDemos consume
+def loadTestData(envName):
+	dataDir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "testingData")
+	path = os.path.join(dataDir, f"{envName}_testData.pkl")
+	if not os.path.exists(path):
+		raise FileNotFoundError(f"test data not found at {path}. Run testGen.py first to generate it.")
+	with open(path, "rb") as f:
+		data = pickle.load(f)
+	if data.get('envName') != envName:
+		print(f"Warning: test data envName '{data.get('envName')}' does not match requested '{envName}'")
+	return data
 
 
 # returns the total number of discrete states implied by the observation space
